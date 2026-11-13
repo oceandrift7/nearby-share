@@ -4,7 +4,16 @@
 
 Implemented two Android QR steps (system Wi-Fi code, secure Nearby pairing code), current-connection-first iPhone flow, and suppression of automatic join when the embedded profile reports the capability missing. The Settings fallback remains available. Added bounded per-download sender read timing and optional receiver collection after file verification. TLS pinning, authorization, and SHA-256 verification remain enabled. No physical speed improvement is claimed.
 
-Validation is in progress. New tests exercise QR image decoding with escaped credentials, partial/bounded stream measurement, production HTTP response lifecycle and authorization, missing-capability policy, wrong-code guidance, and invalid/partial timing reports. The new Camera route still requires a physical iPhone test; the previous manual Settings route has device evidence below.
+Validation at commit `94f8313fb6fa6a0c54740ae713c5559e11f70bae`: local Android app/test compilation and lint passed (0 errors, 34 warnings). Hosted Android build/lint and iPhone device compilation/packaging passed. All **10 Android tests passed on each of API 29 and API 31**, and all **17 iOS simulator tests passed with zero failures**. [Build/test evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43476994887).
+
+The new tests exercise QR image decoding with escaped credentials, partial/bounded stream measurement, production HTTP response lifecycle and authorization, missing-capability policy, wrong-code guidance, and invalid/partial timing reports. The new Camera route still requires a physical iPhone test; the previous manual Settings route has device evidence below.
+
+Downloaded artifacts passed their GitHub SHA-256 digest and ZIP integrity checks. The APK v2 signature verifies; package version is 0.1.4-prototype/code 5. IPA inspection confirms version 0.1.4/build 5 and requested entitlement metadata, which does not grant the capability after SideStore re-signing. Continue with the free-account Camera/Settings flow.
+
+- Android APK SHA-256: `821ebc041f7f0a056b87109bd6548362a395bef16860a767d7b6c6bcde841b24`.
+- iPhone IPA SHA-256: `eec3303a30595b1f36511326c53a4ed6b8697f3afe13721141518055a205d950`.
+
+The downloaded GitHub APK signer differs from 0.1.3; uninstall the previous Android prototype before installing this build. Original selected files are unaffected. No phone throughput result is available for 0.1.4, so no speed increase is claimed.
 
 
 ## Version 0.1.3 physical comparison and signing diagnosis
