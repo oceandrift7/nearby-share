@@ -47,6 +47,17 @@ enum TransferError: LocalizedError {
     var errorDescription: String? { switch self { case .message(let text): return text } }
 }
 
+enum ConnectionDiagnostics {
+    static func describe(_ error: Error, stage: String) -> String {
+        let value = error as NSError
+        let detail = "\(stage) failed: \(value.localizedDescription) [\(value.domain), code \(value.code)]"
+        if value.domain == NEHotspotConfigurationErrorDomain {
+            return detail + "\nTry joining the Android network in Settings → Wi-Fi, then return and tap ‘I joined in Settings — inspect file’. Automatic joining requires the Hotspot Configuration entitlement in the installed app and its provisioning profile. This error alone does not prove a signing issue."
+        }
+        return detail
+    }
+}
+
 @MainActor
 final class TransferModel: ObservableObject {
     @Published var pairing: Pairing?
@@ -66,22 +77,28 @@ final class TransferModel: ObservableObject {
         catch { status = error.localizedDescription }
     }
 
-    func connect() async {
+    func connect(joinNetwork: Bool = true) async {
         guard let pairing, !busy else { return }
         busy = true; cancelled = false
         defer { busy = false }
+        var stage = "Wi-Fi join"
         do {
-            status = "Waiting for Wi-Fi approval…"
-            let config = NEHotspotConfiguration(ssid: pairing.ssid, passphrase: pairing.password, isWEP: false)
-            config.joinOnce = true
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                NEHotspotConfigurationManager.shared.apply(config) { error in
-                    if let error = error as NSError?, !(error.domain == NEHotspotConfigurationErrorDomain && error.code == NEHotspotConfigurationError.alreadyAssociated.rawValue) {
-                        continuation.resume(throwing: error)
-                    } else { continuation.resume() }
+            session?.invalidateAndCancel(); session = nil; agent = nil
+            manifest = nil; host = nil; received = nil
+            if joinNetwork {
+                status = "Waiting for Wi-Fi approval…"
+                let config = NEHotspotConfiguration(ssid: pairing.ssid, passphrase: pairing.password, isWEP: false)
+                config.joinOnce = true
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    NEHotspotConfigurationManager.shared.apply(config) { error in
+                        if let error = error as NSError?, !(error.domain == NEHotspotConfigurationErrorDomain && error.code == NEHotspotConfigurationError.alreadyAssociated.rawValue) {
+                            continuation.resume(throwing: error)
+                        } else { continuation.resume() }
+                    }
                 }
             }
             guard !cancelled else { throw CancellationError() }
+            stage = "Sender inspection"
             let receiver = PinnedReceiver(pin: pairing.certificateSHA256)
             let configuration = URLSessionConfiguration.ephemeral
             configuration.urlCache = nil
@@ -93,6 +110,7 @@ final class TransferModel: ObservableObject {
             let session = URLSession(configuration: configuration, delegate: receiver, delegateQueue: queue)
             self.agent = receiver; self.session = session
             status = "Checking the nearby device's certificate…"
+            var lastFailure = "No response from the sender."
             // A short retry tolerates the Wi-Fi route appearing after the join prompt.
             for attempt in 0..<3 {
                 for candidate in pairing.hosts {
@@ -100,22 +118,27 @@ final class TransferModel: ObservableObject {
                     do {
                         let request = makeRequest(pairing: pairing, host: candidate, path: "manifest", timeout: 4)
                         let (data, response) = try await session.data(for: request)
-                        guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= 65536 else { continue }
+                        guard let http = response as? HTTPURLResponse else { throw TransferError.message("Sender returned no HTTP response.") }
+                        guard http.statusCode == 200 else { throw TransferError.message("Sender returned HTTP \(http.statusCode). Scan a fresh Android code if sharing was restarted.") }
+                        guard data.count <= 65536 else { throw TransferError.message("Sender metadata exceeds the supported size.") }
                         let file = try JSONDecoder().decode(Manifest.self, from: data)
                         guard (0...1_099_511_627_776).contains(file.size), (1...1024).contains(file.name.utf8.count),
-                              file.sha256.count == 64, file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else { continue }
+                              file.sha256.count == 64, file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else { throw TransferError.message("Sender metadata is invalid.") }
                         guard !cancelled else { throw CancellationError() }
                         self.host = candidate; self.manifest = file
                         status = "Encrypted connection verified. Accept the file to start."
                         return
-                    } catch { if cancelled { throw CancellationError() } }
+                    } catch {
+                        if cancelled { throw CancellationError() }
+                        lastFailure = ConnectionDiagnostics.describe(error, stage: "Sender request")
+                    }
                 }
                 if attempt < 2 { try await Task.sleep(nanoseconds: 500_000_000) }
             }
-            throw TransferError.message("Could not reach the Android app. Allow Local Network access in Settings, keep Android open, and scan a fresh code. No certificate bypass was used.")
+            throw TransferError.message("Could not inspect the Android file. Confirm the iPhone is on the Android hotspot and Local Network access is allowed. Keep Android open.\nLast attempt: \(lastFailure)")
         } catch {
             session?.invalidateAndCancel(); session = nil; agent = nil
-            status = cancelled ? "Cancelled." : error.localizedDescription
+            status = cancelled ? "Cancelled." : ConnectionDiagnostics.describe(error, stage: stage)
         }
     }
 

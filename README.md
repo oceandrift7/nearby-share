@@ -18,6 +18,12 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 
 Keep both apps in the foreground and both screens awake. Do not share screenshots of the pairing code: it includes temporary Wi-Fi credentials and authorizes downloading the selected file. This prototype uses possession of the scanned code as sender consent, rather than a second prompt on Android. Select only the file you intend to offer. Stop sharing when finished. This is a functional test build, not a security-audited release.
 
+### If iPhone joining fails
+
+Version 0.1.1 shows the failing phase, error domain and code. An automatic Wi-Fi join failure happens before file inspection; it does not establish that the JPG is faulty. Automatic joining requires the Hotspot Configuration entitlement in the final signature and compatible provisioning profile, not just the source project. A generic internal error alone does not identify the cause.
+
+Expand **Join Wi-Fi manually if automatic joining fails** on iPhone, reveal the temporary password, and join the displayed network in Settings → Wi-Fi. Stay connected despite the lack of internet, then return and tap **I joined in Settings — inspect file**. This skips the automatic join API only; certificate pinning, pairing authorization, and file-integrity verification stay enabled. Keep Android sharing throughout. If inspection still fails, record the full displayed error domain/code without sharing the QR or password.
+
 ## Build
 
 Android: Java 17, Gradle 8.9, Android SDK platform/build-tools 34. From `android`, run `./gradlew :app:assembleDebug :app:lintDebug` (Windows: `.\gradlew.bat :app:assembleDebug :app:lintDebug`). The wrapper downloads Gradle on first use. The debug APK is under `app/build/outputs/apk/debug`. The local Windows build and Android lint check passed; see BUILD_STATUS.md for the remaining checks.

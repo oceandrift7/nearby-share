@@ -8,6 +8,7 @@ struct NearbyPrototypeApp: App {
 struct TransferView: View {
     @StateObject private var model = TransferModel()
     @State private var scanning = false
+    @State private var showPassword = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -21,6 +22,18 @@ struct TransferView: View {
                         Text("Your iPhone will ask before joining this temporary Wi-Fi network. It has no internet connection.")
                         Button("Join and inspect file") { Task { await model.connect() } }
                             .disabled(model.busy || model.manifest != nil)
+                        DisclosureGroup("Join Wi-Fi manually if automatic joining fails") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("1. Open Settings → Wi-Fi and select this network:")
+                                Text(pairing.ssid).font(.headline).textSelection(.enabled)
+                                Button(showPassword ? "Hide Wi-Fi password" : "Show Wi-Fi password") { showPassword.toggle() }
+                                if showPassword { Text(pairing.password).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
+                                Text("2. Enter the password and stay connected even though the network has no internet. Keep the Android app open.")
+                                Text("3. Return here and inspect the file. Certificate verification and encryption remain enabled.")
+                                Button("I joined in Settings — inspect file") { Task { await model.connect(joinNetwork: false) } }
+                                    .disabled(model.busy || model.manifest != nil)
+                            }.padding(.top, 8)
+                        }
                     }
                     if let file = model.manifest {
                         Text(file.name).font(.headline)
@@ -45,6 +58,7 @@ struct TransferView: View {
         .sheet(isPresented: $scanning) {
             QRScanner { result in
                 scanning = false
+                showPassword = false
                 model.scan(result)
             }
         }
