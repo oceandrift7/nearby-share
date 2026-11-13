@@ -42,11 +42,18 @@ class MainActivity : Activity() {
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var server: NanoHTTPD? = null
     private var selected: File? = null
-    private var generation = 0
+    @Volatile private var generation = 0
+    private var inbox: ReceiveInbox? = null
+    private lateinit var receiveButton: Button
+    private lateinit var acceptButton: Button
+    private lateinit var rejectButton: Button
+    private lateinit var saveButton: Button
+    private var exportFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
+        File(filesDir, "received").listFiles()?.filter { it.extension == "partial" }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val ink = Color.rgb(22, 38, 61)
         val blue = Color.rgb(28, 79, 240)
@@ -64,7 +71,7 @@ class MainActivity : Activity() {
         })
         layout.addView(TextView(this).apply { text = "Directly between your devices."; textSize = 15f; setTextColor(Color.rgb(84, 102, 122)) })
         layout.addView(TextView(this).apply {
-            text = "SHARE OFFLINE\n\nAndroid  →  iPhone\n\nChoose a file. Connect. Send."
+            text = "SHARE OFFLINE\n\nAndroid  ↔  iPhone\n\nChoose a file. Connect. Send."
             textSize = 19f; setTextColor(Color.WHITE); setPadding(dp(24), dp(24), dp(24), dp(24))
             background = rounded(blue, 28)
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin=dp(24); bottomMargin=dp(18) })
@@ -80,6 +87,47 @@ class MainActivity : Activity() {
         choose.textSize = 17f
         choose.minHeight = dp(58)
         layout.addView(choose, LinearLayout.LayoutParams(-1, -2))
+        receiveButton = Button(this).apply {
+            text = "Receive from iPhone"
+            setOnClickListener {
+                stopSharing(); choose.isEnabled = false; isEnabled = false
+                startWithPermission("", null, "")
+            }
+        }
+        layout.addView(receiveButton)
+        acceptButton = Button(this).apply { text = "Accept incoming file"; visibility = android.view.View.GONE; setOnClickListener { inbox?.decide(true) } }
+        rejectButton = Button(this).apply { text = "Reject incoming file"; visibility = android.view.View.GONE; setOnClickListener { inbox?.decide(false) } }
+        saveButton = Button(this).apply {
+            text = "Save received file…"; visibility = android.view.View.GONE
+            setOnClickListener {
+                val item = inbox?.snapshot() ?: return@setOnClickListener
+                exportFile = item.saved ?: return@setOnClickListener
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    type = "application/octet-stream"; addCategory(Intent.CATEGORY_OPENABLE)
+                    putExtra(Intent.EXTRA_TITLE, item.name.replace(Regex("[/\\\\]"), "_").take(120))
+                }, 11)
+            }
+        }
+        layout.addView(acceptButton); layout.addView(rejectButton); layout.addView(saveButton)
+        layout.addView(Button(this).apply {
+            text = "Saved incoming files"
+            setOnClickListener {
+                val files = File(filesDir, "received").listFiles()?.filter { it.extension == "received" }?.sortedByDescending { it.lastModified() }.orEmpty()
+                val names = files.map { file ->
+                    try { JSONObject(File(file.parentFile, "${file.nameWithoutExtension}.json").readText()).getString("name") }
+                    catch (_: Exception) { "Received file" }
+                }
+                if (files.isEmpty()) { status.text = "No incoming files saved yet."; return@setOnClickListener }
+                android.app.AlertDialog.Builder(this@MainActivity).setTitle("Save a verified file")
+                    .setItems(names.toTypedArray()) { _, index ->
+                        exportFile = files[index]
+                        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            type = "application/octet-stream"; addCategory(Intent.CATEGORY_OPENABLE)
+                            putExtra(Intent.EXTRA_TITLE, names[index].replace('/', '_').replace('\\', '_').take(120))
+                        }, 11)
+                    }.setNegativeButton("Close", null).show()
+            }
+        })
         layout.addView(Button(this).apply { text = "Stop sharing"; setOnClickListener { stopSharing() } })
         status = TextView(this).apply {
             text = "Ready. No internet needed."; textSize = 16f; setTextColor(ink)
@@ -110,7 +158,7 @@ class MainActivity : Activity() {
         }
         layout.addView(qr, LinearLayout.LayoutParams(-1, -2))
         layout.addView(TextView(this).apply {
-            text = "Keep both apps open. Anyone scanning the Nearby pairing code can download your selected file until you stop sharing.\n\nNearby 0.1.5 · Android → iPhone"
+            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.2.0 · Android ↔ iPhone"
             textSize = 13f; setTextColor(Color.rgb(84, 102, 122)); setPadding(0, dp(20), 0, 0)
         })
         setContentView(ScrollView(this).apply { addView(layout) })
@@ -119,18 +167,34 @@ class MainActivity : Activity() {
     @Deprecated("Prototype uses platform picker")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 11 && resultCode == RESULT_OK) {
+            val source = exportFile ?: return
+            val destination = data?.data ?: return
+            worker.execute {
+                try {
+                    contentResolver.openOutputStream(destination, "w")!!.use { output -> source.inputStream().use { it.copyTo(output, 262144) } }
+                    runOnUiThread { status.text = "Saved your verified file to the selected location." }
+                } catch (_: Exception) {
+                    runOnUiThread { status.text = "Could not export the file. The verified original remains in Nearby; try Save again." }
+                }
+            }
+            return
+        }
         if (requestCode != 10 || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         stopSharing()
         val run = generation
-        choose.isEnabled = false
+        choose.isEnabled = false; receiveButton.isEnabled = false
         status.text = "Preparing file and integrity checksum…"
         worker.execute {
             var snapshot: File? = null
             try {
                 var name = "Shared file"
-                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-                    if (it.moveToFirst()) name = it.getString(0) ?: name
+                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
+                    if (it.moveToFirst()) {
+                        name = it.getString(0) ?: name
+                        if (!it.isNull(1)) require(it.getLong(1) <= cacheDir.usableSpace - ReceiveInbox.RESERVE) { "Not enough free storage to prepare this file." }
+                    }
                 }
                 // Snapshot avoids a provider changing bytes between hashing and downloading.
                 val file = File.createTempFile("outgoing-", ".bin", cacheDir)
@@ -139,6 +203,8 @@ class MainActivity : Activity() {
                 contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().buffered(262144).use { output ->
                     val buffer = ByteArray(262144)
                     while (true) {
+                        check(generation == run) { "Preparation cancelled" }
+                        check(cacheDir.usableSpace > ReceiveInbox.RESERVE) { "Not enough free storage to prepare this file." }
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count); hash.update(buffer, 0, count)
@@ -151,13 +217,13 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
                 snapshot?.delete()
-                runOnUiThread { if (generation == run) { choose.isEnabled = true; status.text = "Preparation failed: ${e.message}" } }
+                runOnUiThread { if (generation == run) { choose.isEnabled = true; receiveButton.isEnabled = true; status.text = "Preparation failed: ${e.message}" } }
             }
         }
     }
 
     private var pending: (() -> Unit)? = null
-    private fun startWithPermission(name: String, file: File, hash: String) {
+    private fun startWithPermission(name: String, file: File?, hash: String) {
         val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
         if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
             pending = { startHotspot(name, file, hash) }
@@ -171,10 +237,10 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(code, permissions, results)
         val action = pending; pending = null
         if (code == 20 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
-        else if (code == 20) { status.text = "Permission required to create the temporary connection."; choose.isEnabled = true }
+        else if (code == 20) { status.text = "Permission required to create the temporary connection."; choose.isEnabled = true; receiveButton.isEnabled = true }
     }
 
-    private fun startHotspot(name: String, file: File, hash: String) {
+    private fun startHotspot(name: String, file: File?, hash: String) {
         val run = generation
         status.text = "Starting offline hotspot… On Android 10–12, enable Location in system settings if this fails. No location is recorded."
         try {
@@ -195,13 +261,18 @@ class MainActivity : Activity() {
                             // Public hotspot band/channel APIs are unavailable on our Android
                             // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
                             val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.1.5")
+                            val diagnostics = JSONObject().put("appVersion", "0.2.0")
                                 .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
                                 .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
                                 .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
-                            val manifest = JSONObject().put("name", name).put("size", file.length()).put("sha256", hash)
-                                .put("diagnostics", diagnostics)
-                            val host = SharedFileServer(9443, token, file, manifest) {
+                            val manifest = JSONObject().put("mode", if (file == null) "receive" else "send")
+                                .put("name", if (file == null) "Android receiver" else name).put("size", file?.length() ?: 0)
+                                .put("sha256", if (file == null) "0".repeat(64) else hash).put("diagnostics", diagnostics)
+                            val receiver = if (file == null) ReceiveInbox(File(filesDir, "received")) {
+                                runOnUiThread { if (generation == run) renderIncoming() }
+                            } else null
+                            runOnUiThread { if (generation == run) inbox = receiver else receiver?.close() }
+                            val host = SharedFileServer(9443, token, file, manifest, receiver) {
                                 runOnUiThread { if (generation == run) status.text = "Serving $name. Check the iPhone for verified completion and speed." }
                             }
                             startedServer = host
@@ -216,7 +287,7 @@ class MainActivity : Activity() {
                                     addresses = (addresses + NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
                                         .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>()
                                         .filter { it.isSiteLocalAddress }.map { it.hostAddress!! }).distinct().take(16)
-                                    Thread.sleep(200)
+                                    check(generation == run) { "Setup cancelled" }; Thread.sleep(200)
                             }
                             if (addresses.isEmpty()) { host.stop(); error("No local hotspot address found. Stop and retry.") }
                             val pairing = JSONObject().put("v", 1).put("ssid", ssid).put("password", password)
@@ -229,7 +300,7 @@ class MainActivity : Activity() {
                                     server = host; pairingBitmap = pairingCode; wifiBitmap = wifiCode
                                     qrSteps.visibility = android.view.View.VISIBLE
                                     showCode(wifi = true)
-                                    status.text = "Ready to share $name (${file.length()} bytes). Keep this app open."
+                                    status.text = if (file == null) "Ready to receive. Connect and pair the iPhone, then choose a file on it. Keep both apps open." else "Ready to share $name (${file.length()} bytes). Keep this app open."
                                 }
                             }
                         } catch (e: Exception) {
@@ -267,6 +338,7 @@ class MainActivity : Activity() {
 
     private fun stopSharing() {
         generation++; pending = null
+        inbox?.close(); inbox = null
         server?.stop(); server = null
         val old = reservation; reservation = null; old?.close()
         selected?.delete(); selected = null
@@ -275,7 +347,26 @@ class MainActivity : Activity() {
         if (::qrSteps.isInitialized) qrSteps.visibility = android.view.View.GONE
         if (::qrHelp.isInitialized) qrHelp.text = ""
         if (::choose.isInitialized) choose.isEnabled = true
+        if (::receiveButton.isInitialized) receiveButton.isEnabled = true
+        if (::acceptButton.isInitialized) acceptButton.visibility = android.view.View.GONE
+        if (::rejectButton.isInitialized) rejectButton.visibility = android.view.View.GONE
+        if (::saveButton.isInitialized) saveButton.visibility = android.view.View.GONE
         if (::status.isInitialized) status.text = "Sharing stopped. Previous QR code is invalid."
+    }
+
+    private fun renderIncoming() {
+        val item = inbox?.snapshot() ?: return
+        acceptButton.visibility = if (item.state == "waiting") android.view.View.VISIBLE else android.view.View.GONE
+        rejectButton.visibility = acceptButton.visibility
+        saveButton.visibility = if (item.state == "complete") android.view.View.VISIBLE else android.view.View.GONE
+        status.text = when (item.state) {
+            "waiting" -> "iPhone offers ${item.name} (${item.size} bytes). Accept only if this is the file you expect."
+            "accepted" -> "Accepted. Waiting for iPhone to send…"
+            "receiving" -> "Receiving ${item.name}: ${item.bytes} / ${item.size} bytes"
+            "complete" -> "Verified complete: ${item.name}. Tap Save received file to choose where to keep it."
+            "failed" -> "Receive failed: ${item.error}. No incomplete file was kept."
+            else -> "Transfer ${item.state}. You can choose another file on the iPhone."
+        }
     }
 
     override fun onDestroy() { stopSharing(); worker.shutdown(); super.onDestroy() }

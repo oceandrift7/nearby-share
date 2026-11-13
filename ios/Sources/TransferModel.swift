@@ -41,6 +41,7 @@ struct Manifest: Decodable {
     let size: Int64
     let sha256: String
     let diagnostics: SenderDiagnostics?
+    var mode: String? = nil
 }
 
 enum TransferError: LocalizedError {
@@ -66,9 +67,13 @@ final class TransferModel: ObservableObject {
     @Published var received: URL?
     @Published var busy = false
     @Published var progress: Double = 0
-    @Published var status = "Choose a file on Android. Join using its Wi-Fi code in Camera, then scan its Nearby pairing code here."
+    @Published var status = "Choose Send or Receive on Android. Join using its Wi-Fi code in Camera, then scan its Nearby pairing code here."
     @Published var diagnosticReport = ""
     @Published var manualJoinSuggested = false
+    @Published var sending = false
+    var androidReceives: Bool { manifest?.mode == "receive" }
+    private var cancellation = TransferCancellation()
+    private var activeOffer: String?
     let profileStatus = HotspotProfileStatus.installed()
     private var joinResult = "not attempted"
     private var senderReadSummary: String?
@@ -90,7 +95,7 @@ final class TransferModel: ObservableObject {
 
     func connect(joinNetwork: Bool = true) async {
         guard let pairing, !busy else { return }
-        busy = true; cancelled = false
+        busy = true; cancelled = false; cancellation = TransferCancellation()
         manualJoinSuggested = false
         defer { busy = false }
         var stage = "Wi-Fi join"
@@ -135,23 +140,27 @@ final class TransferModel: ObservableObject {
             var lastFailure = "No response from the sender."
             // A short retry tolerates the Wi-Fi route appearing after the join prompt.
             let attempts = manualJoinSuggested ? 1 : 3
+            let deadline = ProcessInfo.processInfo.systemUptime + (manualJoinSuggested ? 4 : 12)
             for attempt in 0..<attempts {
                 for candidate in pairing.hosts {
+                    let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                    if remaining < 0.1 { break }
                     guard !cancelled else { throw CancellationError() }
                     do {
-                        let request = makeRequest(pairing: pairing, host: candidate, path: "manifest", timeout: manualJoinSuggested ? 1 : 4)
-                        let (data, response) = try await session.data(for: request)
+                        let request = makeRequest(pairing: pairing, host: candidate, path: "manifest", timeout: min(remaining, manualJoinSuggested ? 1 : 4))
+                        let (data, response) = try await BoundedResponse.read(session: session, request: request, limit: 65536)
                         guard let http = response as? HTTPURLResponse else { throw TransferError.message("Sender returned no HTTP response.") }
                         guard http.statusCode == 200 else { throw TransferError.message("Sender returned HTTP \(http.statusCode). Scan a fresh Android code if sharing was restarted.") }
                         guard data.count <= 65536 else { throw TransferError.message("Sender metadata exceeds the supported size.") }
                         let file = try JSONDecoder().decode(Manifest.self, from: data)
+                        guard file.mode == nil || file.mode == "send" || file.mode == "receive" else { throw TransferError.message("Unsupported transfer mode. Update Nearby on both phones.") }
                         guard (0...1_099_511_627_776).contains(file.size), (1...1024).contains(file.name.utf8.count),
                               file.sha256.count == 64, file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else { throw TransferError.message("Sender metadata is invalid.") }
                         guard !cancelled else { throw CancellationError() }
                         self.host = candidate; self.manifest = file
                         manualJoinSuggested = false
                         updateReport()
-                        status = "Encrypted connection verified. Accept the file to start."
+                        status = file.mode == "receive" ? "Android receiver verified. Choose a file to send, then accept it on Android." : "Encrypted connection verified. Accept the file to start."
                         return
                     } catch {
                         if cancelled { throw CancellationError() }
@@ -170,16 +179,17 @@ final class TransferModel: ObservableObject {
     }
 
     func receive() async {
-        guard let pairing, let manifest, let host, let session, let agent, !busy else { return }
-        busy = true; cancelled = false; progress = 0
+        guard let pairing, let manifest, !androidReceives, let host, let session, let agent, !busy else { return }
+        busy = true; cancelled = false; cancellation = TransferCancellation(); progress = 0
         received = nil; senderReadSummary = nil
         defer { busy = false }
         do {
+            try TransferStorage.requireSpace(manifest.size, at: FileManager.default.temporaryDirectory)
             status = "Receiving…"
             let transferID = UUID().uuidString
             var request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
             request.setValue(transferID, forHTTPHeaderField: "X-Nearby-Transfer-ID")
-            let result = try await agent.download(session: session, request: request, manifest: manifest) { [weak self] count in
+            let result = try await agent.download(session: session, request: request, manifest: manifest, cancellation: cancellation) { [weak self] count in
                 Task { @MainActor in
                     guard let self, !self.cancelled, self.busy, self.received == nil else { return }
                     self.progress = manifest.size == 0 ? 1 : Double(count) / Double(manifest.size)
@@ -188,10 +198,10 @@ final class TransferModel: ObservableObject {
             }
             guard !cancelled else { try? FileManager.default.removeItem(at: result.url); throw CancellationError() }
             received = result.url; progress = 1
-            // Optional v0.1.5 instrumentation, outside the transfer timer. An old
+            // Optional v0.2.0 instrumentation, outside the transfer timer. An old
             // sender, missing record, or timeout must never fail a verified file.
             let statsRequest = makeRequest(pairing: pairing, host: host, path: "transfer-stats?id=\(transferID)", timeout: 2)
-            if let (data, response) = try? await session.data(for: statsRequest),
+            if let (data, response) = try? await BoundedResponse.read(session: session, request: statsRequest, limit: 4096),
                (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 4096,
                let measurement = try? JSONDecoder().decode(SenderReadMeasurement.self, from: data) {
                 senderReadSummary = measurement.summary(expectedBytes: manifest.size)
@@ -205,8 +215,93 @@ final class TransferModel: ObservableObject {
         }
     }
 
+    func send(_ source: URL) async {
+        guard androidReceives, let pairing, let host, let session, let agent, !busy else { return }
+        busy = true; sending = true; cancelled = false; progress = 0
+        cancellation = TransferCancellation()
+        let cancellation = self.cancellation
+        var prepared: OutgoingFile?
+        defer {
+            if let prepared { try? FileManager.default.removeItem(at: prepared.url) }
+            busy = false; sending = false; activeOffer = nil
+        }
+        do {
+            status = "Preparing file and checksum…"
+            let file = try await Task.detached(priority: .userInitiated) {
+                try OutgoingFile.prepare(source, cancellation: cancellation)
+            }.value
+            prepared = file
+            try cancellation.check()
+            var offer = makeRequest(pairing: pairing, host: host, path: "offer", timeout: 10)
+            offer.httpMethod = "POST"
+            offer.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            offer.httpBody = try JSONSerialization.data(withJSONObject: ["name": file.name, "size": file.size, "sha256": file.sha256])
+            let (data, response) = try await BoundedResponse.read(session: session, request: offer, limit: 4096)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw TransferError.message("Android could not accept a new offer. Check its storage and stop any previous receive session, then pair again.")
+            }
+            let receipt = try JSONDecoder().decode(UploadReceipt.self, from: data)
+            guard UUID(uuidString: receipt.id) != nil, receipt.state == "waiting" else { throw TransferError.message("Invalid offer response.") }
+            activeOffer = receipt.id
+            status = "Waiting for Android to accept \(file.name)…"
+            let deadline = ProcessInfo.processInfo.systemUptime + 120
+            while true {
+                try cancellation.check()
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw TransferError.message("No acceptance after two minutes. Try sending again.") }
+                let request = makeRequest(pairing: pairing, host: host, path: "offer?id=\(receipt.id)", timeout: 5)
+                let (data, response) = try await BoundedResponse.read(session: session, request: request, limit: 4096)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw TransferError.message("Android receive session ended. Pair again.") }
+                let state = try JSONDecoder().decode(UploadReceipt.self, from: data)
+                guard state.id == receipt.id else { throw TransferError.message("Android returned a different offer.") }
+                if state.state == "accepted" { break }
+                guard state.state == "waiting" else { throw TransferError.message(state.error ?? "Android \(state.state) the transfer.") }
+                try await Task.sleep(nanoseconds: 400_000_000)
+            }
+            try cancellation.check()
+            status = "Sending \(file.name)…"
+            var request = makeRequest(pairing: pairing, host: host, path: "upload?id=\(receipt.id)", timeout: 120)
+            request.httpMethod = "PUT"
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            request.setValue(String(file.size), forHTTPHeaderField: "Content-Length")
+            let start = ProcessInfo.processInfo.systemUptime
+            let result = try await agent.upload(session: session, request: request, file: file) { [weak self] bytes in
+                Task { @MainActor in
+                    guard let self, self.sending, !self.cancelled else { return }
+                    self.progress = file.size == 0 ? 1 : min(1, Double(bytes) / Double(file.size))
+                    self.status = bytes >= file.size ? "Android is verifying the file…" : "Sent \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))."
+                }
+            }
+            guard result.verifies(file, id: receipt.id) else { throw TransferError.message("Android did not confirm a verified save. Check Android before retrying.") }
+            try cancellation.check()
+            let seconds = max(ProcessInfo.processInfo.systemUptime - start, 0.001)
+            progress = 1
+            status = String(format: "Android verified and saved the file. %.2f s · %.1f MB/s. Tap Save received file on Android to choose a location.", seconds, Double(file.size) / seconds / 1_000_000)
+            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.2.0\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
+        } catch {
+            // Best effort revoke even after the original session was cancelled.
+            // Android also discards incomplete uploads when its socket closes.
+            if let id = activeOffer, !cancelled {
+                var request = makeRequest(pairing: pairing, host: host, path: "offer?id=\(id)", timeout: 2)
+                request.httpMethod = "DELETE"
+                _ = try? await BoundedResponse.read(session: session, request: request, limit: 4096)
+            }
+            status = cancelled ? "Cancelled. Check Android if it had already finished saving." : error.localizedDescription
+        }
+    }
+
     func cancel() {
         cancelled = true
+        cancellation.cancel()
+        // Revoke an offer on a separate short-lived pinned session because the
+        // transfer session must be cancelled immediately (including a PUT).
+        if let id = activeOffer, let pairing, let host {
+            var request = makeRequest(pairing: pairing, host: host, path: "offer?id=\(id)", timeout: 3)
+            request.httpMethod = "DELETE"
+            let config = URLSessionConfiguration.ephemeral
+            config.allowsCellularAccess = false; config.connectionProxyDictionary = [:]
+            let revoke = URLSession(configuration: config, delegate: PinnedReceiver(pin: pairing.certificateSHA256), delegateQueue: nil)
+            Task { _ = try? await BoundedResponse.read(session: revoke, request: request, limit: 4096); revoke.invalidateAndCancel() }
+        }
         session?.invalidateAndCancel()
         session = nil; agent = nil; manifest = nil; host = nil
         // iOS controls the Wi-Fi approval dialog; cancellation is checked when it returns.
@@ -214,6 +309,7 @@ final class TransferModel: ObservableObject {
     }
 
     func disconnect() {
+        cancellation.cancel()
         session?.invalidateAndCancel(); session = nil; agent = nil
         if let pairing, JoinSettings.canRequestAutomaticJoin(profile: profileStatus) {
             NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: pairing.ssid)
@@ -233,12 +329,12 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.1.5", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.2.0", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {
             lines.append("File bytes: \(manifest.size)")
-            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.1.5)")
+            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.2.0)")
             if let result {
                 lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds))
                 lines.append(result.timing.summary)
@@ -255,8 +351,14 @@ struct ReceiveResult { let url: URL; let seconds: Double; let verificationSecond
 
 // Serial delegate queue owns download state. Certificate pin is obtained from the
 // code physically scanned on the sender, never from the network being authenticated.
-final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDownloadDelegate {
+final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDownloadDelegate, URLSessionDataDelegate {
     private let pin: String
+    private var cancellation = TransferCancellation()
+    private var uploadContinuation: CheckedContinuation<UploadReceipt, Error>?
+    private var uploadData = Data()
+    private var uploadProgress: ((Int64) -> Void)?
+    private var uploadLastProgress: TimeInterval = 0
+    private var uploadFailure: Error?
     private var continuation: CheckedContinuation<ReceiveResult, Error>?
     private var expected: Manifest?
     private var started: TimeInterval = 0
@@ -283,10 +385,11 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         completionHandler(nil) // Never forward the bearer token to another endpoint.
     }
 
-    func download(session: URLSession, request: URLRequest, manifest: Manifest,
+    func download(session: URLSession, request: URLRequest, manifest: Manifest, cancellation: TransferCancellation,
                   progress: @escaping (Int64) -> Void) async throws -> ReceiveResult {
         try await withCheckedThrowingContinuation { continuation in
             session.delegateQueue.addOperation {
+                self.cancellation = cancellation
                 self.continuation = continuation; self.expected = manifest; self.result = nil
                 self.onProgress = progress; self.started = ProcessInfo.processInfo.systemUptime
                 self.lastProgress = 0
@@ -318,7 +421,8 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
             let handle = try FileHandle(forReadingFrom: location)
             defer { try? handle.close() }
             var hash = SHA256()
-            while let chunk = try handle.read(upToCount: 262144), !chunk.isEmpty { hash.update(data: chunk) }
+            while let chunk = try handle.read(upToCount: 262144), !chunk.isEmpty { try cancellation.check(); hash.update(data: chunk) }
+            try cancellation.check()
             let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
             guard digest == expected.sha256 else { throw TransferError.message("Integrity check failed. File was not saved.") }
             let verificationSeconds = ProcessInfo.processInfo.systemUptime - verificationStart
@@ -331,6 +435,18 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if task is URLSessionUploadTask, let pending = uploadContinuation {
+            uploadContinuation = nil; uploadProgress = nil
+            defer { uploadData = Data(); uploadFailure = nil }
+            if let failure = uploadFailure ?? error { pending.resume(throwing: failure) }
+            else if (task.response as? HTTPURLResponse)?.statusCode != 200 {
+                pending.resume(throwing: TransferError.message("Android could not save this upload. Check its screen and storage."))
+            } else {
+                do { pending.resume(returning: try JSONDecoder().decode(UploadReceipt.self, from: uploadData)) }
+                catch { pending.resume(throwing: error) }
+            }
+            return
+        }
         guard task is URLSessionDownloadTask, let continuation else { return }
         self.continuation = nil; onProgress = nil; expected = nil
         if let error {
@@ -342,6 +458,35 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
             } } ?? .failure(TransferError.message("No completed file received.")))
         }
         result = nil
+    }
+
+    func upload(session: URLSession, request: URLRequest, file: OutgoingFile,
+                progress: @escaping (Int64) -> Void) async throws -> UploadReceipt {
+        try await withCheckedThrowingContinuation { continuation in
+            session.delegateQueue.addOperation {
+                self.uploadContinuation = continuation; self.uploadData = Data(); self.uploadFailure = nil
+                self.uploadProgress = progress; self.uploadLastProgress = 0
+                session.uploadTask(with: request, fromFile: file.url).resume()
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard task is URLSessionUploadTask else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - uploadLastProgress >= 0.25 || totalBytesSent == totalBytesExpectedToSend {
+            uploadLastProgress = now; uploadProgress?(totalBytesSent)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard dataTask is URLSessionUploadTask, uploadContinuation != nil else { return }
+        guard uploadData.count + data.count <= 4096 else {
+            uploadFailure = TransferError.message("Android's acknowledgement exceeds the supported size.")
+            dataTask.cancel(); return
+        }
+        uploadData.append(data)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {

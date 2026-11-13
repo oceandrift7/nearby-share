@@ -6,15 +6,20 @@ import java.io.File
 
 // The activity enables TLS before starting this server. The port is injectable
 // so endpoint/stream lifecycle tests can use an ephemeral local listener.
-class SharedFileServer(port: Int, private val token: String, private val file: File,
-                       private val manifest: JSONObject, private val onFileRequested: () -> Unit) : NanoHTTPD(port) {
+class SharedFileServer(port: Int, private val token: String, private val file: File?,
+                       private val manifest: JSONObject, private val inbox: ReceiveInbox? = null,
+                       private val onFileRequested: () -> Unit) : NanoHTTPD(port) {
     private val readReports = SenderReadReports()
     override fun serve(session: IHTTPSession): Response {
-        if (session.method != Method.GET || session.headers["authorization"] != "Bearer $token")
-            return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Pairing required")
+        if (session.headers["authorization"] != "Bearer $token")
+            return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Pairing required").also { it.addHeader("Connection", "close") }
+        if (inbox != null && session.uri in listOf("/offer", "/upload")) return inbox.serve(session)
+        if (session.method != Method.GET)
+            return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "GET required").also { it.addHeader("Connection", "close") }
         val response = when (session.uri) {
             "/manifest" -> newFixedLengthResponse(Response.Status.OK, "application/json", manifest.toString())
             "/file" -> {
+                if (file == null) return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "No outgoing file")
                 onFileRequested()
                 val id = session.headers["x-nearby-transfer-id"]
                 val input = file.inputStream().buffered(262144)

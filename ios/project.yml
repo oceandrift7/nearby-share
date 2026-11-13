@@ -29,11 +29,11 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: Nearby prototype
-        CFBundleShortVersionString: "0.1.5"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "7"
         UILaunchScreen: {}
         NSCameraUsageDescription: Scan the other phone's pairing code to connect for a local transfer.
-        NSLocalNetworkUsageDescription: Receive files directly from a nearby device without internet.
+        NSLocalNetworkUsageDescription: Send and receive files directly from a nearby device without internet.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         NSAppTransportSecurity:

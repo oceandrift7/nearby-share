@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct NearbyPrototypeApp: App {
@@ -8,6 +9,7 @@ struct NearbyPrototypeApp: App {
 struct TransferView: View {
     @StateObject private var model = TransferModel()
     @State private var scanning = false
+    @State private var pickingFile = false
     @State private var showPassword = false
     @State private var manualExpanded = false
     @State private var returningFromSettings = false
@@ -32,7 +34,7 @@ struct TransferView: View {
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.buttonStyle(.borderedProminent).disabled(model.busy)
                     DisclosureGroup("How to connect") {
-                        Text("First scan Android’s step 1 Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the step 2 Nearby pairing code here. Keep both apps open. This version receives one Android file; iPhone sending and iPhone-to-iPhone are still in development.")
+                        Text("First scan Android’s step 1 Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the step 2 Nearby pairing code here. Keep both apps open. Choose a file on Android to send here, or tap Receive from iPhone on Android to send in the other direction. Android asks you to accept before receiving. iPhone-to-iPhone is not supported yet.")
                             .font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
                     }.nearbyCard()
                     if let pairing = model.pairing, model.manifest == nil {
@@ -63,7 +65,12 @@ struct TransferView: View {
                             }.padding(.top, 8)
                         }
                     }
-                    if let file = model.manifest {
+                    if model.androidReceives {
+                        Button { pickingFile = true } label: {
+                            Label("Choose file to send to Android", systemImage: "square.and.arrow.up")
+                        }.buttonStyle(.borderedProminent).disabled(model.busy)
+                    }
+                    if let file = model.manifest, !model.androidReceives {
                         VStack(alignment: .leading, spacing: 16) {
                             Label("Incoming file", systemImage: "doc.fill").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             Text(file.name).font(.title3.bold()).textSelection(.enabled)
@@ -99,11 +106,17 @@ struct TransferView: View {
                     if model.pairing != nil {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
-                    Text("Nearby 0.1.5 · Android → iPhone").font(.caption).foregroundStyle(.secondary)
+                    Text("Nearby 0.2.0 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
             }.background(Color(uiColor: .systemGroupedBackground))
                 .toolbar(.hidden, for: .navigationBar)
                 .tint(.blue)
+        }
+        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item]) { result in
+            switch result {
+            case .success(let url): Task { await model.send(url) }
+            case .failure(let error): model.status = "Could not choose file: \(error.localizedDescription)"
+            }
         }
         .sheet(isPresented: $scanning) {
             QRScanner { result in
@@ -147,8 +160,8 @@ private struct ReceiverHero: View {
                     .font(.system(size: 34)).padding(22)
                     .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 24))
             }.frame(height: 165).accessibilityHidden(true)
-            Text(connected ? "Connected to Android" : "Receive from Android").font(.title3.bold())
-            Text(connected ? "Certificate verified. Review the file below." : "Join the hotspot, then scan its pairing code.")
+            Text(connected ? "Connected to Android" : "Share with Android").font(.title3.bold())
+            Text(connected ? "Certificate verified. Choose your next action below." : "Join the hotspot, then scan its pairing code.")
                 .font(.subheadline).multilineTextAlignment(.center).foregroundStyle(.white.opacity(0.85))
         }.foregroundStyle(.white).padding(20).frame(maxWidth: .infinity)
             .background(Color(red: 0.11, green: 0.31, blue: 0.94), in: RoundedRectangle(cornerRadius: 28))
