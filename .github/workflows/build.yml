@@ -110,6 +110,7 @@ jobs:
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
           xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun simctl bootstatus "$DEVICE_ID" -b
           xcrun simctl install "$DEVICE_ID" build-simulator/Build/Products/Debug-iphonesimulator/NearbyPrototype.app
           xcrun simctl launch "$DEVICE_ID" org.nearbyshare.prototype
           sleep 3
