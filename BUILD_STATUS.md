@@ -37,4 +37,14 @@ The device retest with iPhone 0.1.1 showed automatic Wi-Fi joining still failing
 
 Code inspection found the original Android RSA key lacked the permissions needed for pre-hashed TLS signing. The new identity uses Keystore P-256 with DIGEST_NONE and SHA256, and a key manager restricted to the new alias. This avoids accidentally reusing the old RSA key on an upgrade. The app checks pinned TLS 1.2 and 1.3 plus authenticated HTTP against its running server before issuing the QR, and closes the server if setup fails. iPhone source and the wire protocol are unchanged.
 
-Added actual Android emulator handshake tests (API 29 and 31), including original-key failure reproduction and mismatched certificate rejection. Build/test results and physical-device confirmation are pending for this revision. No transfer-speed claim is made.
+Validation for commit `38f7454f8f69119ce31cb78dde9d30d281d3dec5`:
+
+- Local APK and instrumentation-test APK compilation passed. Local lint passed with 0 errors and 32 warnings.
+- Hosted Android APK build and lint passed.
+- All 6 instrumented tests passed on Android 10 / API 29, and all 6 passed on Android 12 / API 31. The tests reproduced the original RSA key's TLS 1.2/1.3 handshake failures; the corrected key completed both protocols and authenticated HTTP. A mismatched certificate was rejected, and reopening the identity with a legacy RSA alias present retained the correct certificate.
+- Downloaded GitHub APK: artifact digest and ZIP integrity checked, APK v2 signature verified, package version 0.1.2-prototype / code 3 confirmed. APK SHA-256: `be14fd7bb4cd57a8934bd09dc79060e5ea4a733381e0f59f4d55b0d939720217`.
+- The new hosted APK's debug signer differs from the earlier GitHub APK; uninstall the earlier prototype before installing this one. Original system-picker photos are unaffected.
+
+Evidence: [Android 10 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375044), [Android 12 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375231), [hosted build](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671374958).
+
+These reproduce and repair a concrete sender defect on Android emulators; they do not establish that the user's Samsung-to-iPhone transfer is successful. Physical-device confirmation is pending. Keep iPhone 0.1.1, scan the new Android QR, and use manual Settings joining for the separate automatic-join error. No transfer-speed claim is made.
