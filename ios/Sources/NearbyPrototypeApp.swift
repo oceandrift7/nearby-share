@@ -9,37 +9,49 @@ struct TransferView: View {
     @StateObject private var model = TransferModel()
     @State private var scanning = false
     @State private var showPassword = false
+    @State private var manualExpanded = false
+    @State private var returningFromSettings = false
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Offline transfer prototype").font(.title.bold())
+                    Text("Nearby 0.1.3").font(.title.bold())
                     Text("Receive one file from the Android app. Keep both apps open. This build does not yet send files or connect two iPhones.")
                     Button("Scan Android pairing code") { scanning = true }
                         .buttonStyle(.borderedProminent).disabled(model.busy)
-                    if let pairing = model.pairing {
+                    if let pairing = model.pairing, model.manifest == nil {
                         Text("Connect to \(pairing.ssid)?").font(.headline)
                         Text("Your iPhone will ask before joining this temporary Wi-Fi network. It has no internet connection.")
+                        Text("Tap Disconnect when finished to remove the app's Wi-Fi configuration. Otherwise it can remain saved for up to one day.").font(.footnote)
                         Button("Join and inspect file") { Task { await model.connect() } }
                             .disabled(model.busy || model.manifest != nil)
-                        DisclosureGroup("Join Wi-Fi manually if automatic joining fails") {
+                        DisclosureGroup("Join in Wi-Fi Settings", isExpanded: $manualExpanded) {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("1. Open Settings → Wi-Fi and select this network:")
                                 Text(pairing.ssid).font(.headline).textSelection(.enabled)
                                 Button(showPassword ? "Hide Wi-Fi password" : "Show Wi-Fi password") { showPassword.toggle() }
                                 if showPassword { Text(pairing.password).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
+                                Button("Copy Wi-Fi password") {
+                                    UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic: pairing.password]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(90)])
+                                }
                                 Text("2. Enter the password and stay connected even though the network has no internet. Keep the Android app open.")
-                                Text("3. Return here and inspect the file. Certificate verification and encryption remain enabled.")
+                                Text("3. Return here. Nearby will check the connection automatically.")
                                 Button("I joined in Settings — inspect file") { Task { await model.connect(joinNetwork: false) } }
                                     .disabled(model.busy || model.manifest != nil)
+                                if model.profileStatus == .missing {
+                                    Text("This installation's signing profile does not allow automatic Wi-Fi joining. Join in Settings, or re-sign with Hotspot Configuration enabled.").font(.footnote)
+                                }
                             }.padding(.top, 8)
                         }
                     }
                     if let file = model.manifest {
                         Text(file.name).font(.headline)
                         Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
-                        Button("Accept and receive file") { Task { await model.receive() } }
-                            .buttonStyle(.borderedProminent).disabled(model.busy || model.received != nil)
+                        if model.received == nil {
+                            Button("Accept and receive file") { Task { await model.receive() } }
+                                .buttonStyle(.borderedProminent).disabled(model.busy)
+                        }
                     }
                     if model.busy {
                         ProgressView(value: model.progress)
@@ -48,6 +60,14 @@ struct TransferView: View {
                     Text(model.status).textSelection(.enabled)
                     if let url = model.received {
                         ShareLink(item: url) { Label("Save or share received file", systemImage: "square.and.arrow.up") }
+                        Button("Receive another copy") { Task { await model.receive() } }.disabled(model.busy)
+                    }
+                    if !model.diagnosticReport.isEmpty {
+                        DisclosureGroup("Connection and speed details") {
+                            Text(model.diagnosticReport).font(.footnote.monospaced()).textSelection(.enabled)
+                            ShareLink(item: model.diagnosticReport) { Label("Share diagnostic report", systemImage: "square.and.arrow.up") }
+                            Text("The report excludes the file name, Wi-Fi password, pairing code and account identifiers.").font(.footnote)
+                        }
                     }
                     if model.pairing != nil {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
@@ -59,9 +79,20 @@ struct TransferView: View {
             QRScanner { result in
                 scanning = false
                 showPassword = false
+                manualExpanded = false
+                returningFromSettings = false
                 model.scan(result)
             }
         }
         .onChange(of: model.busy) { busy in UIApplication.shared.isIdleTimerDisabled = busy }
+        .onChange(of: model.manualJoinSuggested) { suggested in if suggested { manualExpanded = true } }
+        .onChange(of: model.manifest != nil) { connected in if connected { manualExpanded = false; showPassword = false } }
+        .onChange(of: scenePhase) { phase in
+            if phase == .background { returningFromSettings = manualExpanded && model.pairing != nil && model.manifest == nil }
+            if phase == .active && returningFromSettings {
+                returningFromSettings = false
+                if !model.busy && model.manifest == nil { Task { await model.connect(joinNetwork: false) } }
+            }
+        }
     }
 }

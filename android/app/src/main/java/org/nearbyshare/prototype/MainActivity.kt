@@ -41,7 +41,7 @@ class MainActivity : Activity() {
         cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.2"; textSize = 24f })
+        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.3"; textSize = 24f })
         layout.addView(TextView(this).apply { text = "Android → iPhone only in this first build. Choose one file, then scan this phone's QR code on the iPhone. Keep both apps open. Anyone scanning the code can download the selected file until you stop." })
         choose = Button(this).apply {
             text = "Choose a file"
@@ -134,7 +134,15 @@ class MainActivity : Activity() {
                             val tokenBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
                             val token = hex(tokenBytes)
                             val identity = LocalTlsIdentity.create()
+                            // Public hotspot band/channel APIs are unavailable on our Android
+                            // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
+                            val bandMask: Int? = null
+                            val diagnostics = JSONObject().put("appVersion", "0.1.3")
+                                .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
+                                .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
+                                .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
                             val manifest = JSONObject().put("name", name).put("size", file.length()).put("sha256", hash)
+                                .put("diagnostics", diagnostics)
                             val host = object : NanoHTTPD(9443) {
                                 override fun serve(session: IHTTPSession): Response {
                                     if (session.method != Method.GET || session.headers["authorization"] != "Bearer $token")

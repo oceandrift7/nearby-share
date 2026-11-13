@@ -38,6 +38,16 @@ Technical basis: [Android Keystore digest authorization for TLS](https://develop
 
 ## Build
 
+### Version 0.1.3 connection and measurement changes
+
+The iPhone now requests a normal Wi-Fi configuration with a one-day lifetime and removes the app's configuration on Disconnect. This replaces the previous `joinOnce` mode; it is a compatibility change to test, not a proven fix for every code-8 failure. On an internal join error, the receiver also checks whether the pinned sender is already reachable. User denial and invalid credentials are not treated as successful joins. The manual panel opens after failure, offers an explicit password-copy button, and checks the connection when returning from Settings. Successful pairing hides setup instructions. **Receive another copy** allows repeated measurements without re-pairing and saves another file copy.
+
+**Connection and speed details → Share diagnostic report** provides exact file bytes, transfer/checksum time, first-byte/body/TLS timings when available, and connection reuse. Android 0.1.3 supplies its model, API level and 5 GHz hardware support. The hotspot's actual channel/link rate remains unknown: the relevant public APIs are unavailable on Android 10/12, and upstream Wi-Fi information would describe the wrong connection. Hardware support alone does not establish use of 5 GHz. The report excludes file names, Wi-Fi credentials, tokens, IP addresses, certificate pins and signing-account identifiers. It is shared only when the user chooses to share it.
+
+The receiver reports whether the embedded provisioning profile contains Hotspot Configuration. This is a diagnostic XML inspection, not validation of the CMS signature or the installed app's entitlements. An absent/unreadable profile is reported as unknown. The setting cannot grant a capability excluded by the user's signing profile. Cellular access is disabled for transfer sessions. Existing Android 0.1.2 senders remain compatible, without sender diagnostics.
+
+References: Apple's [joinOnce lifetime](https://developer.apple.com/documentation/networkextension/nehotspotconfiguration/joinonce), [normal configuration lifetime](https://developer.apple.com/documentation/networkextension/nehotspotconfiguration/lifetimeindays), [signing/profile checks](https://help.apple.com/xcode/mac/current/en.lproj/dev298d7b2cb.html), and Android's [SoftApConfiguration public API](https://developer.android.com/reference/android/net/wifi/SoftApConfiguration).
+
 Android: Java 17, Gradle 8.9, Android SDK platform/build-tools 34. From `android`, run `./gradlew :app:assembleDebug :app:lintDebug` (Windows: `.\gradlew.bat :app:assembleDebug :app:lintDebug`). The wrapper downloads Gradle on first use. The debug APK is under `app/build/outputs/apk/debug`. The local Windows build and Android lint check passed; see BUILD_STATUS.md for the remaining checks.
 
 iOS: Swift 5 language mode, deployment target iOS 16, XcodeGen project specification under `ios/project.yml`. On macOS, run `xcodegen generate`, then open the generated project and select the developer team. Compilation without signing: `xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`.
