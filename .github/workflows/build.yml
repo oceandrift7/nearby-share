@@ -43,6 +43,12 @@ jobs:
       - name: Package unsigned iPhone build for later signing
         working-directory: ios
         run: |
+          # Preserve requested capabilities in the executable for re-signers
+          # that discover entitlements from Mach-O, including SideSign.
+          # Ad-hoc signing is metadata only: installation still needs an Apple profile.
+          codesign --force --sign - --entitlements NearbyPrototype.entitlements build/Build/Products/Debug-iphoneos/NearbyPrototype.app
+          codesign --display --entitlements :- build/Build/Products/Debug-iphoneos/NearbyPrototype.app > build/requested-entitlements.plist
+          python3 -c 'import plistlib; e=plistlib.load(open("build/requested-entitlements.plist", "rb")); assert e.get("com.apple.developer.networking.HotspotConfiguration") is True'
           mkdir -p build/unsigned/Payload
           ditto build/Build/Products/Debug-iphoneos/NearbyPrototype.app build/unsigned/Payload/NearbyPrototype.app
           cd build/unsigned
