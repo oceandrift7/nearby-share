@@ -7,4 +7,5 @@ local.properties
 *.ipa
 *.apk
 *.xcodeproj/
+*.xcresult/
 work/

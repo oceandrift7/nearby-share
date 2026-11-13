@@ -1,6 +1,7 @@
 name: Build prototype
 on:
   push:
+    paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -8,6 +9,7 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -30,6 +32,7 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
   ios-compile:
     runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
@@ -37,10 +40,27 @@ jobs:
         working-directory: ios
       - run: xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -sdk iphoneos -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
         working-directory: ios
+      - name: Package unsigned iPhone build for later signing
+        working-directory: ios
+        run: |
+          mkdir -p build/unsigned/Payload
+          ditto build/Build/Products/Debug-iphoneos/NearbyPrototype.app build/unsigned/Payload/NearbyPrototype.app
+          cd build/unsigned
+          zip -qry NearbyPrototype-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-prototype-unsigned-needs-signing
+          path: ios/build/unsigned/NearbyPrototype-unsigned.ipa
       - name: Test pairing validation on simulator
         working-directory: ios
         shell: bash
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
-          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iphone-test-results
+          path: ios/TestResults.xcresult
+          if-no-files-found: ignore
       # This validates compilation only. An unsigned .app cannot be sideloaded.

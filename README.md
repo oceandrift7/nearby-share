@@ -24,7 +24,7 @@ Android: Java 17, Gradle 8.9, Android SDK platform/build-tools 34. From `android
 
 iOS: Swift 5 language mode, deployment target iOS 16, XcodeGen project specification under `ios/project.yml`. On macOS, run `xcodegen generate`, then open the generated project and select the developer team. Compilation without signing: `xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`.
 
-The included GitHub Actions workflow builds the Android APK and checks unsigned iOS device compilation. **It does not create a signed IPA.** Signing and installation need the developer's own certificate/profile and a separate signing setup. Never commit certificates, private keys, or provisioning profiles. xtool/WSL deployment is an alternative to evaluate; this project currently has an XcodeGen build definition, not a validated xtool build definition.
+The included GitHub Actions workflow builds the Android APK, compiles the iOS app, and runs pairing-validation tests on a simulator. The Actions artifacts include an **unsigned IPA that must be signed before installation** and simulator test results. Signing and installation need the developer's own certificate/profile and a separate signing setup. Never commit certificates, private keys, or provisioning profiles. xtool/WSL deployment is an alternative to evaluate; this project currently has an XcodeGen build definition, not a validated xtool build definition.
 
 ## Protocol v1
 
