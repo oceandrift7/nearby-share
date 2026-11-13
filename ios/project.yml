@@ -1,0 +1,49 @@
+name: NearbyPrototype
+options:
+  bundleIdPrefix: org.nearbyshare
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+schemes:
+  NearbyPrototype:
+    build:
+      targets:
+        NearbyPrototype: all
+    test:
+      targets: [NearbyPrototypeTests]
+targets:
+  NearbyPrototype:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.nearbyshare.prototype
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: NearbyPrototype.entitlements
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Nearby prototype
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        NSCameraUsageDescription: Scan the other phone's pairing code to connect for a local transfer.
+        NSLocalNetworkUsageDescription: Receive files directly from a nearby device without internet.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+  NearbyPrototypeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: NearbyPrototype
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
