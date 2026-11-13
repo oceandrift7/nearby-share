@@ -4,7 +4,7 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 
 **Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone scans a QR code, asks to join, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
 
-**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No throughput claims are established. Native iOS compilation and real-device transfer tests remain required.
+**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No throughput claims are established. Android builds and lint pass, the iPhone app compiles, and four pairing-validation tests passed on an iOS simulator. Real-device transfer tests remain required.
 
 ## How the first device test works
 
