@@ -12,8 +12,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.view.WindowManager
 import android.widget.*
 import com.google.zxing.BarcodeFormat
@@ -24,16 +22,9 @@ import org.json.JSONObject
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.security.KeyPairGenerator
-import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.Date
 import java.util.concurrent.Executors
-import java.math.BigInteger
-import javax.net.ssl.KeyManagerFactory
-import javax.net.ssl.SSLContext
-import javax.security.auth.x500.X500Principal
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -44,14 +35,13 @@ class MainActivity : Activity() {
     private var server: NanoHTTPD? = null
     private var selected: File? = null
     private var generation = 0
-    private val alias = "nearby-prototype-server"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        layout.addView(TextView(this).apply { text = "Nearby • connection prototype"; textSize = 24f })
+        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.2"; textSize = 24f })
         layout.addView(TextView(this).apply { text = "Android → iPhone only in this first build. Choose one file, then scan this phone's QR code on the iPhone. Keep both apps open. Anyone scanning the code can download the selected file until you stop." })
         choose = Button(this).apply {
             text = "Choose a file"
@@ -139,10 +129,11 @@ class MainActivity : Activity() {
                     @Suppress("DEPRECATION")
                     val password = if (Build.VERSION.SDK_INT >= 30) r.softApConfiguration.passphrase!! else r.wifiConfiguration!!.preSharedKey
                     worker.execute {
+                        var startedServer: NanoHTTPD? = null
                         try {
                             val tokenBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
                             val token = hex(tokenBytes)
-                            val (tls, pin) = makeTLS()
+                            val identity = LocalTlsIdentity.create()
                             val manifest = JSONObject().put("name", name).put("size", file.length()).put("sha256", hash)
                             val host = object : NanoHTTPD(9443) {
                                 override fun serve(session: IHTTPSession): Response {
@@ -160,8 +151,11 @@ class MainActivity : Activity() {
                                     return response
                                 }
                             }
-                            host.makeSecure(tls.serverSocketFactory, arrayOf("TLSv1.2", "TLSv1.3"))
+                            startedServer = host
+                            host.makeSecure(identity.context.serverSocketFactory, LocalTlsIdentity.protocols)
                             host.start(30_000, true)
+                            runOnUiThread { if (generation == run) status.text = "Checking encrypted connection…" }
+                            TlsSelfTest.verify(identity, host.listeningPort, token)
                             // Interfaces can appear shortly after onStarted. Include all private IPv4
                             // candidates; the iPhone tries them and accepts only the pinned certificate.
                             var addresses = emptyList<String>()
@@ -173,15 +167,18 @@ class MainActivity : Activity() {
                             }
                             if (addresses.isEmpty()) { host.stop(); error("No local hotspot address found. Stop and retry.") }
                             val pairing = JSONObject().put("v", 1).put("ssid", ssid).put("password", password)
-                                .put("hosts", JSONArray(addresses)).put("port", 9443).put("token", token).put("certificateSHA256", pin)
+                                .put("hosts", JSONArray(addresses)).put("port", 9443).put("token", token).put("certificateSHA256", identity.pin)
                             val matrix = MultiFormatWriter().encode(pairing.toString(), BarcodeFormat.QR_CODE, 800, 800)
                             val pixels = IntArray(800 * 800) { i -> if (matrix[i % 800, i / 800]) 0xff000000.toInt() else 0xffffffff.toInt() }
                             val bitmap = Bitmap.createBitmap(pixels, 800, 800, Bitmap.Config.ARGB_8888)
                             runOnUiThread {
                                 if (generation != run || isDestroyed) host.stop()
-                                else { server = host; qr.setImageBitmap(bitmap); status.text = "Ready to share $name (${file.length()} bytes). Scan on iPhone. Preparation time is excluded from transfer speed." }
+                                else { server = host; qr.setImageBitmap(bitmap); status.text = "Ready to share $name (${file.length()} bytes). TLS self-check passed. Scan on iPhone. Preparation time is excluded from transfer speed." }
                             }
-                        } catch (e: Exception) { runOnUiThread { if (generation == run) { stopSharing(); status.text = "Setup failed: ${e.message}" } } }
+                        } catch (e: Exception) {
+                            startedServer?.stop()
+                            runOnUiThread { if (generation == run) { stopSharing(); status.text = "Setup failed: ${e.javaClass.simpleName}: ${e.message}" } }
+                        }
                     }
                 }
                 override fun onFailed(reason: Int) { if (generation == run) { stopSharing(); status.text = "Hotspot failed ($reason). Enable Wi-Fi and Location; turn off existing tethering, then retry." } }
@@ -190,24 +187,6 @@ class MainActivity : Activity() {
         } catch (e: SecurityException) {
             stopSharing(); status.text = "Hotspot permission was denied or revoked. Allow the requested permission, then retry."
         } catch (e: Exception) { stopSharing(); status.text = "Could not start hotspot: ${e.message}" }
-    }
-
-    private fun makeTLS(): Pair<SSLContext, String> {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!store.containsAlias(alias)) {
-            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore").apply {
-                initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
-                    .setKeySize(2048).setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
-                    .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1, KeyProperties.SIGNATURE_PADDING_RSA_PSS)
-                    .setCertificateSubject(X500Principal("CN=Nearby prototype"))
-                    .setCertificateSerialNumber(BigInteger.ONE)
-                    .setCertificateNotBefore(Date(0)).setCertificateNotAfter(Date(4102444800000L)).build())
-                generateKeyPair()
-            }
-        }
-        val managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, null) }
-        val context = SSLContext.getInstance("TLS").apply { init(managers.keyManagers, null, SecureRandom()) }
-        return context to hex(MessageDigest.getInstance("SHA-256").digest(store.getCertificate(alias).encoded))
     }
 
     private fun stopSharing() {

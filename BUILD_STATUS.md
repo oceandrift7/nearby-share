@@ -29,4 +29,12 @@ Inspection of the original 0.1.0 IPA confirmed that its executable did not reque
 
 The updated package embeds and checks requested hotspot entitlement metadata before re-signing. It still needs valid Apple signing/provisioning for installation. The receiver adds a manual Settings Wi-Fi join path that retains TLS pinning and authorization, plus error domain/code and phase diagnostics. Hardware validation of either recovery path is pending.
 
-Version 0.1.1 validation: device compilation passed, and six simulator tests passed with zero failures (https://github.com/oceandrift7/nearby-share/actions/runs/43357508843). The final packaging job passed its entitlement assertion; independent inspection of the downloaded IPA's Mach-O confirmed the requested capability is present (https://github.com/oceandrift7/nearby-share/actions/runs/43357708673). Artifact ZIP digest and archive integrity were checked. The user can keep the existing Android sender for this retry.
+Version 0.1.1 validation: device compilation passed, and six simulator tests passed with zero failures (https://github.com/oceandrift7/nearby-share/actions/runs/43357508843). The final packaging job passed its entitlement assertion; independent inspection of the downloaded IPA's Mach-O confirmed the requested capability is present (https://github.com/oceandrift7/nearby-share/actions/runs/43357708673). Artifact ZIP digest and archive integrity were checked.
+
+## Android 0.1.2 TLS repair
+
+The device retest with iPhone 0.1.1 showed automatic Wi-Fi joining still failing with NEHotspotConfigurationErrorDomain code 8. After taking the manual Settings route, sender inspection failed with NSURLErrorDomain -1200 (TLS). These are separate stages; the screenshot alone does not identify the TLS root cause.
+
+Code inspection found the original Android RSA key lacked the permissions needed for pre-hashed TLS signing. The new identity uses Keystore P-256 with DIGEST_NONE and SHA256, and a key manager restricted to the new alias. This avoids accidentally reusing the old RSA key on an upgrade. The app checks pinned TLS 1.2 and 1.3 plus authenticated HTTP against its running server before issuing the QR, and closes the server if setup fails. iPhone source and the wire protocol are unchanged.
+
+Added actual Android emulator handshake tests (API 29 and 31), including original-key failure reproduction and mismatched certificate rejection. Build/test results and physical-device confirmation are pending for this revision. No transfer-speed claim is made.

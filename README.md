@@ -26,6 +26,14 @@ Expand **Join Wi-Fi manually if automatic joining fails** on iPhone, reveal the 
 
 The version 0.1.1 package preserves requested Hotspot Configuration entitlement metadata using an ad-hoc signature before packaging. SideSign reads requested entitlements from the executable, so merely declaring the capability in the source project is insufficient for a completely unsigned binary. This metadata is not an installation identity: SideStore must still re-sign with an appropriate Apple account/profile, and preservation in the final installed app remains to be verified.
 
+### If inspection fails with TLS error -1200
+
+Update the **Android sender to 0.1.2** and scan a fresh QR. The existing iPhone 0.1.1 receiver remains compatible. The original Android Keystore RSA key omitted permissions needed by the TLS stack's pre-hashed signing operation. Version 0.1.2 uses a P-256 signing key configured for that operation and explicitly selects its new alias even when an older key remains installed. It keeps TLS 1.2/1.3, QR certificate pinning, and bearer authorization. Android now completes pinned TLS handshakes and an authenticated manifest request against its own server before displaying the QR. This check runs locally and does not require internet.
+
+The iPhone's automatic Wi-Fi joining error is separate; use the manual Settings path if it still occurs. A passing sender self-check does not establish that an iPhone transfer succeeded. If Android refuses to install a new debug APK over the previous one, uninstall the old prototype first: hosted debug builds can have different signing keys. This clears prototype app data, not the original photos selected through the system picker.
+
+Technical basis: [Android Keystore digest authorization for TLS](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setDigests(java.lang.String...)). `DIGEST_NONE` permits signing an already-computed digest; it does not remove the TLS transcript hash or disable encryption. EC signing also avoids the older RSA-PSS/raw-RSA provider path described in [Conscrypt issue 1201](https://github.com/google/conscrypt/issues/1201).
+
 ## Build
 
 Android: Java 17, Gradle 8.9, Android SDK platform/build-tools 34. From `android`, run `./gradlew :app:assembleDebug :app:lintDebug` (Windows: `.\gradlew.bat :app:assembleDebug :app:lintDebug`). The wrapper downloads Gradle on first use. The debug APK is under `app/build/outputs/apk/debug`. The local Windows build and Android lint check passed; see BUILD_STATUS.md for the remaining checks.
@@ -33,6 +41,8 @@ Android: Java 17, Gradle 8.9, Android SDK platform/build-tools 34. From `android
 iOS: Swift 5 language mode, deployment target iOS 16, XcodeGen project specification under `ios/project.yml`. On macOS, run `xcodegen generate`, then open the generated project and select the developer team. Compilation without signing: `xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`.
 
 The included GitHub Actions workflow builds the Android APK, compiles the iOS app, and runs pairing-validation tests on a simulator. The Actions artifacts include an **unsigned IPA that must be signed before installation** and simulator test results. Signing and installation need the developer's own certificate/profile and a separate signing setup. Never commit certificates, private keys, or provisioning profiles. xtool/WSL deployment is an alternative to evaluate; this project currently has an XcodeGen build definition, not a validated xtool build definition.
+
+The Android instrumented tests run actual NanoHTTPD/Conscrypt/Keystore TLS connections on Android 10 and 12 emulators. They cover both TLS versions, certificate mismatch rejection, reopening the new identity with an old RSA alias present, and reproducing handshake failures with the original key configuration. Run with `./gradlew :app:connectedDebugAndroidTest` with an emulator/device attached.
 
 ## Protocol v1
 
