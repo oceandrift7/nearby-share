@@ -4,9 +4,11 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 
 **Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone scans a QR code, asks to join, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
 
-**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. A single measured offline run is recorded below; hardware-limit throughput has not been established. Version 0.1.3 builds and Android lint pass; 14 iOS simulator tests and 6 Android TLS tests on each of Android 10 and 12 passed. Physical-device validation of the new joining flow is pending.
+**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. A single measured offline run is recorded below; hardware-limit throughput has not been established. Version 0.1.3 builds and Android lint pass; 14 iOS simulator tests and 6 Android TLS tests on each of Android 10 and 12 passed. Device testing confirms transfers via manual joining; the installed free-account signing profile omits Hotspot Configuration, so automatic joining remains unresolved.
 
 **Device results, 13 November 2026:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. An earlier roughly 0.3 MB JPEG was also received successfully.
+
+**0.1.3 comparison:** the same 105,575,757-byte file completed in 246.975 s (0.427 MB/s) on home Wi-Fi and 16.547 s (6.380 MB/s) on the Android hotspot. Both passed verification. The installed profile reports no Hotspot Configuration capability; the user confirmed signing with a different/free account. The faster hotspot path still required manual joining. See BUILD_STATUS.md for timings and limitations.
 
 ## How the first device test works
 

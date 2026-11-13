@@ -1,5 +1,20 @@
 # Build status — 13 November 2026
 
+## Version 0.1.3 physical comparison and signing diagnosis
+
+User screenshots show verified completion of the same 105,575,757-byte file on Samsung SM-A217F (Android API 31) to iPhone (iOS 27.0.1, build 24A446), both apps 0.1.3. This corrects the earlier approximate iOS version report.
+
+| User-reported connection | Transfer | Throughput | First byte | Response body | TLS | Checksum |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Home Wi-Fi | 246.975 s | 0.427 MB/s | 0.161 s | 246.812 s | 0.110 s | 0.094 s |
+| Android hotspot, manual join | 16.547 s | 6.380 MB/s | 0.151 s | 16.392 s | 0.040 s | 0.090 s |
+
+The hotspot run was approximately 14.9 times faster. The difference is in response-body delivery; TLS setup and checksum time are small. This does not isolate radio interference, router behavior, sender I/O, or other causes within body delivery. Actual hotspot band/channel and link speed remain unknown. No improvement over the earlier 6.1 MB/s baseline is established by this small sample. The user did not explicitly reconfirm internet availability for these two runs.
+
+Both reports say Hotspot Configuration is missing from the embedded provisioning profile. The user confirms SideStore signed this copy using a different/free Apple account, rather than the separately reported paid signing setup. Automatic joining returned code 8. On home Wi-Fi the receiver's pinned probe reached the sender through an already available private-LAN address; that is not evidence of a successful Wi-Fi switch. When not connected to the hotspot, inspection returned URL error -1009. This does not mean internet is required.
+
+Next signing step: establish whether the paid setup is an owned Developer Program membership or a signing-service certificate, then produce a matching profile/signature with Hotspot Configuration. The app's XML inspection is diagnostic; the full installed signature has not been inspected. Changing joinOnce cannot grant a capability omitted by signing. Manual hotspot joining remains functional. Sources: [Apple entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.hotspotconfiguration), [profile/signature verification](https://help.apple.com/xcode/mac/current/en.lproj/dev298d7b2cb.html).
+
 ## Version 0.1.3 — connection flow and diagnostics
 
 Both platform packages built successfully at commit `58719318ed3d2c114efc7b62970fbeef593bcdec`. Hosted Android lint passed; iOS device compilation and packaging passed. All **14 iOS simulator tests** passed with zero failures, and all **6 Android TLS tests** passed on each of API 29 and API 31. [Build and test evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43366348363).
@@ -9,7 +24,7 @@ Downloaded artifacts passed SHA-256 and ZIP integrity checks. Android APK v2 sig
 - Android APK SHA-256: `cdc4f519584ba82ba2bf2de7737c76bc08238881f3d767576ae5f6519caa43b9`.
 - iPhone IPA SHA-256: `b457d787ed4f97228beebe0ea844c80625855550de317c48dafd81abda733666`.
 
-The revised normal Wi-Fi join, return-from-Settings inspection, repeat-download UI, profile capability report, and transfer timings need physical-device validation. This revision does not establish a throughput improvement. The measured 6.1 MB/s below remains the baseline. Android reports 5 GHz hardware support; its actual hotspot channel is unavailable through the public APIs on the target Android 10/12 versions. The diagnostic report marks this unknown. The hosted debug APK has a different signer from 0.1.2, so uninstall the older Android prototype before installation. Existing original files remain unaffected.
+Physical testing now confirms verified transfers, timing reports, and the missing profile capability; automatic joining remains blocked in the reported installation. Return-from-Settings and repeat-download interactions were not individually confirmed. This revision does not establish a throughput improvement. The measured 6.1 MB/s below remains the baseline. Android reports 5 GHz hardware support; its actual hotspot channel is unavailable through the public APIs on the target Android 10/12 versions. The diagnostic report marks this unknown. The hosted debug APK has a different signer from 0.1.2, so uninstall the older Android prototype before installation. Existing original files remain unaffected.
 
 ## Earlier validation and physical-device baseline
 
