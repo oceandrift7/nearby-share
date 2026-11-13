@@ -2,9 +2,9 @@
 
 Early source prototype for a free, open-source nearby file-sharing app. The name is temporary. No ads, analytics, accounts, or file-upload servers.
 
-**Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone scans a QR code, asks to join, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
+**Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone joins through Camera or Settings, scans a secure pairing QR, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
 
-**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. A single measured offline run is recorded below; hardware-limit throughput has not been established. Version 0.1.3 builds and Android lint pass; 14 iOS simulator tests and 6 Android TLS tests on each of Android 10 and 12 passed. Device testing confirms transfers via manual joining; the installed free-account signing profile omits Hotspot Configuration, so automatic joining remains unresolved.
+**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. Measured device runs are recorded below; hardware-limit throughput has not been established. Version 0.1.4 adds a two-code Camera/Settings connection flow and sender read timings. See BUILD_STATUS.md for validation; the physical measurements below are from earlier builds. Device testing confirms transfers via manual joining; the installed free-account signing profile omits Hotspot Configuration, so automatic joining remains unresolved.
 
 **Device results, 13 November 2026:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. An earlier roughly 0.3 MB JPEG was also received successfully.
 
@@ -16,9 +16,10 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 2. Install the iPhone IPA through your signing tool. The tested setup uses SideStore with a free Apple account and manual Wi-Fi joining. Automatic joining additionally requires Hotspot Configuration in the installed signature and profile; it is unavailable in the reported installation. No paid membership is required to continue testing the demonstrated manual transfer flow. The source bundle identifier is `org.nearbyshare.prototype`.
 3. Disable mobile data on both phones and disconnect from the home router. Keep Wi-Fi enabled. On Android 10–12, hotspot creation may also require Location enabled and the requested permission; the app does not read coordinates.
 4. On Android, choose a small, non-sensitive file. The app snapshots it in private cache and hashes it before offering it. This preparation requires additional disk space equal to the file size.
-5. On iPhone, scan the code in the prototype app, choose **Join and inspect file**, approve Wi-Fi and Local Network prompts, then choose **Accept and receive file**.
-6. Wait for **Verified complete**, record the speed, and use **Save or share received file**. Files also appear under On My iPhone → Nearby prototype.
-7. Stop sharing on Android and disconnect on iPhone. Stop invalidates the old code and deletes the sender's private snapshot. Received files remain until manually deleted.
+5. Android initially displays **1. Show Wi-Fi code**. Open the iPhone's **Camera**, scan it and tap **Join Network**. This is a local hotspot without internet. If Camera offers no join prompt, use the Settings fallback below.
+6. On Android tap **2. Show Nearby pairing code**. Open Nearby on iPhone, tap **Scan Android pairing code**, then **Inspect current connection**. Allow Local Network access and tap **Accept and receive file**.
+7. Wait for **Verified complete**, record the speed, and use **Save or share received file**. Files also appear under On My iPhone → Nearby prototype.
+8. Stop sharing on Android and disconnect on iPhone. Stop invalidates the old code and deletes the sender's private snapshot. Received files remain until manually deleted.
 
 Keep both apps in the foreground and both screens awake. Do not share screenshots of the pairing code: it includes temporary Wi-Fi credentials and authorizes downloading the selected file. This prototype uses possession of the scanned code as sender consent, rather than a second prompt on Android. Select only the file you intend to offer. Stop sharing when finished. This is a functional test build, not a security-audited release.
 
@@ -26,7 +27,7 @@ Keep both apps in the foreground and both screens awake. Do not share screenshot
 
 Version 0.1.1 shows the failing phase, error domain and code. An automatic Wi-Fi join failure happens before file inspection; it does not establish that the JPG is faulty. Automatic joining requires the Hotspot Configuration entitlement in the final signature and compatible provisioning profile, not just the source project. A generic internal error alone does not identify the cause.
 
-Expand **Join Wi-Fi manually if automatic joining fails** on iPhone, reveal the temporary password, and join the displayed network in Settings → Wi-Fi. Stay connected despite the lack of internet, then return and tap **I joined in Settings — inspect file**. This skips the automatic join API only; certificate pinning, pairing authorization, and file-integrity verification stay enabled. Keep Android sharing throughout. If inspection still fails, record the full displayed error domain/code without sharing the QR or password.
+Expand **Join in Wi-Fi Settings** on iPhone, reveal the temporary password, and join the displayed network in Settings → Wi-Fi. Stay connected despite the lack of internet, then return and tap **I joined in Settings — inspect file**. This skips the automatic join API only; certificate pinning, pairing authorization, and file-integrity verification stay enabled. Keep Android sharing throughout. If inspection still fails, record the full displayed error domain/code without sharing the QR or password.
 
 The version 0.1.1 package preserves requested Hotspot Configuration entitlement metadata using an ad-hoc signature before packaging. SideSign reads requested entitlements from the executable, so merely declaring the capability in the source project is insufficient for a completely unsigned binary. This metadata is not an installation identity: SideStore must still re-sign with an appropriate Apple account/profile, and preservation in the final installed app remains to be verified.
 
@@ -39,6 +40,18 @@ The iPhone's automatic Wi-Fi joining error is separate; use the manual Settings 
 Technical basis: [Android Keystore digest authorization for TLS](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setDigests(java.lang.String...)). `DIGEST_NONE` permits signing an already-computed digest; it does not remove the TLS transcript hash or disable encryption. EC signing also avoids the older RSA-PSS/raw-RSA provider path described in [Conscrypt issue 1201](https://github.com/google/conscrypt/issues/1201).
 
 ## Build
+
+### Version 0.1.4: free-account connection flow and sender profiling
+
+The primary iPhone action is **Inspect current connection**. When the embedded profile lacks Hotspot Configuration, Nearby does not offer or call the automatic join API. Camera/Settings joining works with the tested free SideStore setup. If the profile is present or unreadable, automatic joining remains an optional action; success is established only by a pinned, authorized manifest response.
+
+Android offers two separately labeled codes: a standard Wi-Fi QR for the iPhone system Camera, then the existing Nearby pairing QR for the app. The Wi-Fi QR grants network access only; it does not authorize file downloads or replace the TLS pin. Scanning the wrong code inside Nearby gives instructions instead of a JSON error. Both codes stay local and are removed from the UI when sharing stops. Settings/password-copy remains the fallback. Camera joining on the user's physical phones still needs testing. A network joined through Camera/Settings must be left or forgotten in Settings; clearing pairing cannot remove a system-owned Wi-Fi configuration.
+
+After a verified download, the receiver optionally fetches that request's buffered snapshot read time from the sender. This measurement excludes socket writes/TLS and is not a storage benchmark: the file may be cached. It can help identify whether sender reads account for appreciable transfer time; it cannot on its own distinguish radio limits, TLS processing, or receiver storage. Transfer speed excludes this diagnostic request, which has a two-second timeout. Older senders remain compatible and show the measurement as unavailable. A missing report never fails a verified file. Reports are bounded to eight per sharing session, require the pairing token, and expose no file names or paths.
+
+There is **no claimed transfer-speed increase in this revision**. The demonstrated hotspot rate remains about 6.4 MB/s. Repeat the same file on the hotspot and share the new diagnostic report to narrow the remaining bottleneck.
+
+Format references: [ZXing Wi-Fi QR syntax and escaping](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11), [Apple Wi-Fi QR sharing](https://support.apple.com/en-euro/guide/iphone/iph96e6aa9bb/ios).
 
 ### Version 0.1.3 connection and measurement changes
 
@@ -66,6 +79,7 @@ Android serves HTTPS on port 9443 with an Android Keystore key and self-signed c
 
 - `GET /manifest` → `{ "name": "example.mp4", "size": 123, "sha256": "..." }`
 - `GET /file` → raw file bytes with fixed content length and `Cache-Control: no-store`.
+- Optional `GET /transfer-stats?id=<download UUID>` → `{ "bytes": 123, "calls": 1, "readSeconds": 0.001 }`. The receiver sets `X-Nearby-Transfer-ID` on `/file`; only completed stream records are returned, otherwise 404. Partial byte counts are rejected by the receiver.
 - Other methods or missing/incorrect token → 403; unknown paths → 404.
 
 Android's snapshot prevents changes between hashing and sending. Transfers use bounded-size buffers rather than retaining the entire file in RAM. iOS saves into its Documents folder only after verifying size and hash. Original names are sanitized and prefixed with a random ID. The HTTP server still needs profiling; this prototype is not proof that its transport reaches hardware limits.

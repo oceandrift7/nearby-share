@@ -1,5 +1,12 @@
 # Build status — 13 November 2026
 
+## Version 0.1.4 — Camera/Settings connection and sender read measurements
+
+Implemented two Android QR steps (system Wi-Fi code, secure Nearby pairing code), current-connection-first iPhone flow, and suppression of automatic join when the embedded profile reports the capability missing. The Settings fallback remains available. Added bounded per-download sender read timing and optional receiver collection after file verification. TLS pinning, authorization, and SHA-256 verification remain enabled. No physical speed improvement is claimed.
+
+Validation is in progress. New tests exercise QR image decoding with escaped credentials, partial/bounded stream measurement, production HTTP response lifecycle and authorization, missing-capability policy, wrong-code guidance, and invalid/partial timing reports. The new Camera route still requires a physical iPhone test; the previous manual Settings route has device evidence below.
+
+
 ## Version 0.1.3 physical comparison and signing diagnosis
 
 User screenshots show verified completion of the same 105,575,757-byte file on Samsung SM-A217F (Android API 31) to iPhone (iOS 27.0.1, build 24A446), both apps 0.1.3. This corrects the earlier approximate iOS version report.

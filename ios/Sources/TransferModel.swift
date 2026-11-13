@@ -66,11 +66,12 @@ final class TransferModel: ObservableObject {
     @Published var received: URL?
     @Published var busy = false
     @Published var progress: Double = 0
-    @Published var status = "Choose a file on Android, then scan its code here."
+    @Published var status = "Choose a file on Android. Join using its Wi-Fi code in Camera, then scan its Nearby pairing code here."
     @Published var diagnosticReport = ""
     @Published var manualJoinSuggested = false
     let profileStatus = HotspotProfileStatus.installed()
     private var joinResult = "not attempted"
+    private var senderReadSummary: String?
     private var agent: PinnedReceiver?
     private var session: URLSession?
     private var host: String?
@@ -78,7 +79,12 @@ final class TransferModel: ObservableObject {
 
     func scan(_ text: String) {
         disconnect()
-        do { pairing = try Pairing.parse(text); status = "Pairing code scanned. Review and join the network." }
+        // A system Wi-Fi QR is not a pairing code and supplies no TLS identity.
+        if text.hasPrefix("WIFI:") {
+            status = "That is the Wi-Fi code. Scan it with the iPhone Camera to join. Then show Android's step 2 Nearby code and scan it here."
+            return
+        }
+        do { pairing = try Pairing.parse(text); status = "Pairing scanned. If already connected, tap Inspect current connection. Otherwise join through Camera or Settings first." }
         catch { status = error.localizedDescription }
     }
 
@@ -90,8 +96,8 @@ final class TransferModel: ObservableObject {
         var stage = "Wi-Fi join"
         do {
             session?.invalidateAndCancel(); session = nil; agent = nil
-            manifest = nil; host = nil; received = nil
-            if joinNetwork {
+            manifest = nil; host = nil; received = nil; senderReadSummary = nil
+            if joinNetwork && JoinSettings.canRequestAutomaticJoin(profile: profileStatus) {
                 status = "Waiting for Wi-Fi approval…"
                 let config = JoinSettings.configuration(for: pairing)
                 do { try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -110,7 +116,7 @@ final class TransferModel: ObservableObject {
                     guard JoinSettings.shouldInspectAfterFailure(failure) else { throw error }
                     manualJoinSuggested = true
                 }
-            } else { joinResult = "manual Settings join" }
+            } else { joinResult = "current connection (Camera / Settings / existing Wi-Fi)" }
             guard !cancelled else { throw CancellationError() }
             stage = "Sender inspection"
             let receiver = PinnedReceiver(pin: pairing.certificateSHA256)
@@ -166,11 +172,13 @@ final class TransferModel: ObservableObject {
     func receive() async {
         guard let pairing, let manifest, let host, let session, let agent, !busy else { return }
         busy = true; cancelled = false; progress = 0
-        received = nil
+        received = nil; senderReadSummary = nil
         defer { busy = false }
         do {
             status = "Receiving…"
-            let request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
+            let transferID = UUID().uuidString
+            var request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
+            request.setValue(transferID, forHTTPHeaderField: "X-Nearby-Transfer-ID")
             let result = try await agent.download(session: session, request: request, manifest: manifest) { [weak self] count in
                 Task { @MainActor in
                     guard let self, !self.cancelled, self.busy, self.received == nil else { return }
@@ -180,6 +188,15 @@ final class TransferModel: ObservableObject {
             }
             guard !cancelled else { try? FileManager.default.removeItem(at: result.url); throw CancellationError() }
             received = result.url; progress = 1
+            // Optional v0.1.4 instrumentation, outside the transfer timer. An old
+            // sender, missing record, or timeout must never fail a verified file.
+            let statsRequest = makeRequest(pairing: pairing, host: host, path: "transfer-stats?id=\(transferID)", timeout: 2)
+            if let (data, response) = try? await session.data(for: statsRequest),
+               (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 4096,
+               let measurement = try? JSONDecoder().decode(SenderReadMeasurement.self, from: data) {
+                senderReadSummary = measurement.summary(expectedBytes: manifest.size)
+            }
+            guard !cancelled else { status = "Transfer verified and saved. Diagnostic check cancelled."; return }
             updateReport(result: result)
             status = String(format: "Verified complete. Transfer: %.2f s · %.1f MB/s. Checksum: %.2f s. Preparation and Wi-Fi setup excluded.", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds)
         } catch {
@@ -198,10 +215,13 @@ final class TransferModel: ObservableObject {
 
     func disconnect() {
         session?.invalidateAndCancel(); session = nil; agent = nil
-        if let pairing { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: pairing.ssid) }
+        if let pairing, JoinSettings.canRequestAutomaticJoin(profile: profileStatus) {
+            NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: pairing.ssid)
+        }
         pairing = nil; manifest = nil; received = nil; host = nil; progress = 0
+        senderReadSummary = nil
         diagnosticReport = ""; manualJoinSuggested = false; joinResult = "not attempted"
-        status = "Disconnected. Previously received files remain in Files → On My iPhone → Nearby prototype."
+        status = "Pairing cleared. To leave a network joined in Camera or Settings, use Settings → Wi-Fi. Previously received files remain in Files → On My iPhone → Nearby prototype."
     }
 
     private func makeRequest(pairing: Pairing, host: String, path: String, timeout: TimeInterval) -> URLRequest {
@@ -213,15 +233,16 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.1.3", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.1.4", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {
             lines.append("File bytes: \(manifest.size)")
-            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.1.3)")
+            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.1.4)")
             if let result {
                 lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds))
                 lines.append(result.timing.summary)
+                lines.append(senderReadSummary ?? "Sender snapshot read timing: unavailable")
             }
         }
         if let error { let value = error as NSError; lines.append("Failure: \(value.domain), code \(value.code)") }

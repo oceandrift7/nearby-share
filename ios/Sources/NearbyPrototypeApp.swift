@@ -16,16 +16,19 @@ struct TransferView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Nearby 0.1.3").font(.title.bold())
-                    Text("Receive one file from the Android app. Keep both apps open. This build does not yet send files or connect two iPhones.")
+                    Text("Nearby 0.1.4").font(.title.bold())
+                    Text("First scan Android’s Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the Nearby pairing code here. Receive one file from the Android app. Keep both apps open. This build does not yet send files or connect two iPhones.")
                     Button("Scan Android pairing code") { scanning = true }
                         .buttonStyle(.borderedProminent).disabled(model.busy)
                     if let pairing = model.pairing, model.manifest == nil {
                         Text("Connect to \(pairing.ssid)?").font(.headline)
-                        Text("Your iPhone will ask before joining this temporary Wi-Fi network. It has no internet connection.")
-                        Text("Tap Disconnect when finished to remove the app's Wi-Fi configuration. Otherwise it can remain saved for up to one day.").font(.footnote)
-                        Button("Join and inspect file") { Task { await model.connect() } }
-                            .disabled(model.busy || model.manifest != nil)
+                        Text("For the direct offline connection, scan Android's step 1 Wi-Fi code with the iPhone Camera, or join in Settings below. Keep Android open.")
+                        Button("Inspect current connection") { Task { await model.connect(joinNetwork: false) } }
+                            .buttonStyle(.borderedProminent).disabled(model.busy)
+                        if JoinSettings.canRequestAutomaticJoin(profile: model.profileStatus) {
+                            Button("Ask iPhone to join automatically") { Task { await model.connect() } }
+                                .disabled(model.busy)
+                        }
                         DisclosureGroup("Join in Wi-Fi Settings", isExpanded: $manualExpanded) {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("1. Open Settings → Wi-Fi and select this network:")
@@ -40,7 +43,7 @@ struct TransferView: View {
                                 Button("I joined in Settings — inspect file") { Task { await model.connect(joinNetwork: false) } }
                                     .disabled(model.busy || model.manifest != nil)
                                 if model.profileStatus == .missing {
-                                    Text("This installation's signing profile does not allow automatic Wi-Fi joining. Join in Settings, or re-sign with Hotspot Configuration enabled.").font(.footnote)
+                                    Text("Use Camera or Settings to join with this installation. No paid account is needed for this transfer.").font(.footnote)
                                 }
                             }.padding(.top, 8)
                         }
@@ -82,6 +85,7 @@ struct TransferView: View {
                 manualExpanded = false
                 returningFromSettings = false
                 model.scan(result)
+                manualExpanded = model.pairing != nil && model.profileStatus == .missing
             }
         }
         .onChange(of: model.busy) { busy in UIApplication.shared.isIdleTimerDisabled = busy }

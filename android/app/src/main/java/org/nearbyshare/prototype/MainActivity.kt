@@ -30,6 +30,10 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var qr: ImageView
     private lateinit var choose: Button
+    private lateinit var qrSteps: LinearLayout
+    private lateinit var qrHelp: TextView
+    private var wifiBitmap: Bitmap? = null
+    private var pairingBitmap: Bitmap? = null
     private val worker = Executors.newSingleThreadExecutor()
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var server: NanoHTTPD? = null
@@ -41,8 +45,8 @@ class MainActivity : Activity() {
         cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.3"; textSize = 24f })
-        layout.addView(TextView(this).apply { text = "Android → iPhone only in this first build. Choose one file, then scan this phone's QR code on the iPhone. Keep both apps open. Anyone scanning the code can download the selected file until you stop." })
+        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.4"; textSize = 24f })
+        layout.addView(TextView(this).apply { text = "Android → iPhone only in this first build. Choose one file, then follow the two QR steps below. Keep both apps open. Anyone scanning the code can download the selected file until you stop." })
         choose = Button(this).apply {
             text = "Choose a file"
             setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -53,6 +57,21 @@ class MainActivity : Activity() {
         layout.addView(Button(this).apply { text = "Stop sharing"; setOnClickListener { stopSharing() } })
         status = TextView(this).apply { text = "Ready. No internet needed." }
         layout.addView(status)
+        qrSteps = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = android.view.View.GONE
+            addView(Button(this@MainActivity).apply {
+                text = "1. Show Wi-Fi code"
+                setOnClickListener { showCode(wifi = true) }
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "2. Show Nearby pairing code"
+                setOnClickListener { showCode(wifi = false) }
+            })
+        }
+        layout.addView(qrSteps)
+        qrHelp = TextView(this)
+        layout.addView(qrHelp)
         qr = ImageView(this)
         layout.addView(qr, LinearLayout.LayoutParams(-1, 800))
         setContentView(ScrollView(this).apply { addView(layout) })
@@ -137,27 +156,14 @@ class MainActivity : Activity() {
                             // Public hotspot band/channel APIs are unavailable on our Android
                             // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
                             val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.1.3")
+                            val diagnostics = JSONObject().put("appVersion", "0.1.4")
                                 .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
                                 .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
                                 .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
                             val manifest = JSONObject().put("name", name).put("size", file.length()).put("sha256", hash)
                                 .put("diagnostics", diagnostics)
-                            val host = object : NanoHTTPD(9443) {
-                                override fun serve(session: IHTTPSession): Response {
-                                    if (session.method != Method.GET || session.headers["authorization"] != "Bearer $token")
-                                        return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Pairing required")
-                                    val response = when (session.uri) {
-                                        "/manifest" -> newFixedLengthResponse(Response.Status.OK, "application/json", manifest.toString())
-                                        "/file" -> {
-                                            runOnUiThread { if (generation == run) status.text = "Serving $name. Check the iPhone for verified completion and speed." }
-                                            newFixedLengthResponse(Response.Status.OK, "application/octet-stream", file.inputStream().buffered(262144), file.length())
-                                        }
-                                        else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
-                                    }
-                                    response.addHeader("Cache-Control", "no-store")
-                                    return response
-                                }
+                            val host = SharedFileServer(9443, token, file, manifest) {
+                                runOnUiThread { if (generation == run) status.text = "Serving $name. Check the iPhone for verified completion and speed." }
                             }
                             startedServer = host
                             host.makeSecure(identity.context.serverSocketFactory, LocalTlsIdentity.protocols)
@@ -176,12 +182,16 @@ class MainActivity : Activity() {
                             if (addresses.isEmpty()) { host.stop(); error("No local hotspot address found. Stop and retry.") }
                             val pairing = JSONObject().put("v", 1).put("ssid", ssid).put("password", password)
                                 .put("hosts", JSONArray(addresses)).put("port", 9443).put("token", token).put("certificateSHA256", identity.pin)
-                            val matrix = MultiFormatWriter().encode(pairing.toString(), BarcodeFormat.QR_CODE, 800, 800)
-                            val pixels = IntArray(800 * 800) { i -> if (matrix[i % 800, i / 800]) 0xff000000.toInt() else 0xffffffff.toInt() }
-                            val bitmap = Bitmap.createBitmap(pixels, 800, 800, Bitmap.Config.ARGB_8888)
+                            val pairingCode = qrBitmap(pairing.toString())
+                            val wifiCode = qrBitmap(WifiQr.encode(ssid, password))
                             runOnUiThread {
                                 if (generation != run || isDestroyed) host.stop()
-                                else { server = host; qr.setImageBitmap(bitmap); status.text = "Ready to share $name (${file.length()} bytes). TLS self-check passed. Scan on iPhone. Preparation time is excluded from transfer speed." }
+                                else {
+                                    server = host; pairingBitmap = pairingCode; wifiBitmap = wifiCode
+                                    qrSteps.visibility = android.view.View.VISIBLE
+                                    showCode(wifi = true)
+                                    status.text = "Ready to share $name (${file.length()} bytes). Keep this app open."
+                                }
                             }
                         } catch (e: Exception) {
                             startedServer?.stop()
@@ -197,12 +207,29 @@ class MainActivity : Activity() {
         } catch (e: Exception) { stopSharing(); status.text = "Could not start hotspot: ${e.message}" }
     }
 
+    private fun qrBitmap(payload: String): Bitmap {
+        val matrix = MultiFormatWriter().encode(payload, BarcodeFormat.QR_CODE, 800, 800)
+        val pixels = IntArray(800 * 800) { i -> if (matrix[i % 800, i / 800]) 0xff000000.toInt() else 0xffffffff.toInt() }
+        return Bitmap.createBitmap(pixels, 800, 800, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun showCode(wifi: Boolean) {
+        qr.setImageBitmap(if (wifi) wifiBitmap else pairingBitmap)
+        qr.contentDescription = if (wifi) "Wi-Fi connection QR code" else "Nearby secure pairing QR code"
+        qrHelp.text = if (wifi)
+            "Step 1: Open the iPhone's Camera (outside Nearby), scan this Wi-Fi code, and tap Join Network. Stay connected without internet. Then tap step 2 above. If Camera does not offer to join, use the Settings instructions after scanning the Nearby code."
+        else "Step 2: Open Nearby on the iPhone and tap Scan Android pairing code. Scan this code, then tap Inspect current connection. Already on the same Wi-Fi? You can skip step 1, though the direct hotspot was faster in device testing."
+    }
+
     private fun stopSharing() {
         generation++; pending = null
         server?.stop(); server = null
         val old = reservation; reservation = null; old?.close()
         selected?.delete(); selected = null
         if (::qr.isInitialized) qr.setImageDrawable(null)
+        wifiBitmap = null; pairingBitmap = null
+        if (::qrSteps.isInitialized) qrSteps.visibility = android.view.View.GONE
+        if (::qrHelp.isInitialized) qrHelp.text = ""
         if (::choose.isInitialized) choose.isEnabled = true
         if (::status.isInitialized) status.text = "Sharing stopped. Previous QR code is invalid."
     }

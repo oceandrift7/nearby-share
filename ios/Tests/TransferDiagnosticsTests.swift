@@ -3,6 +3,31 @@ import NetworkExtension
 @testable import NearbyPrototype
 
 final class TransferDiagnosticsTests: XCTestCase {
+    func testMissingCapabilityUsesCurrentConnectionWithoutAutomaticJoin() {
+        XCTAssertFalse(JoinSettings.canRequestAutomaticJoin(profile: .missing))
+        XCTAssertTrue(JoinSettings.canRequestAutomaticJoin(profile: .present))
+        XCTAssertTrue(JoinSettings.canRequestAutomaticJoin(profile: .unknown))
+    }
+
+    func testSenderReadMeasurementRejectsPartialOrInvalidReports() {
+        XCTAssertNil(SenderReadMeasurement(bytes: 99, calls: 1, readSeconds: 0.1).summary(expectedBytes: 100))
+        XCTAssertNil(SenderReadMeasurement(bytes: 100, calls: -1, readSeconds: 0.1).summary(expectedBytes: 100))
+        XCTAssertNil(SenderReadMeasurement(bytes: 100, calls: 1, readSeconds: -.infinity).summary(expectedBytes: 100))
+        XCTAssertNil(SenderReadMeasurement(bytes: 100, calls: 1, readSeconds: -1).summary(expectedBytes: 100))
+        let text = SenderReadMeasurement(bytes: 100, calls: 1, readSeconds: 0.001).summary(expectedBytes: 100)
+        XCTAssertTrue(text?.contains("100 bytes") == true)
+        XCTAssertTrue(text?.contains("not a storage benchmark") == true)
+    }
+
+    @MainActor func testWifiCodeGivesCameraInstructionsWithoutPairing() {
+        let model = TransferModel()
+        model.scan("WIFI:T:WPA;S:AndroidShare;P:password;;")
+        XCTAssertNil(model.pairing)
+        XCTAssertNil(model.manifest)
+        XCTAssertTrue(model.status.contains("iPhone Camera"))
+        XCTAssertTrue(model.status.contains("step 2"))
+    }
+
     private func profile(_ entitlements: [String: Any]) throws -> Data {
         let xml = try PropertyListSerialization.data(fromPropertyList: ["Entitlements": entitlements, "TeamName": "private-account-name"], format: .xml, options: 0)
         return Data([0x30, 0x82, 0xff]) + xml + Data([0, 1, 2])

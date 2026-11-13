@@ -27,6 +27,8 @@ enum HotspotProfileStatus: String {
 }
 
 enum JoinSettings {
+    static func canRequestAutomaticJoin(profile: HotspotProfileStatus) -> Bool { profile != .missing }
+
     static func configuration(for pairing: Pairing) -> NEHotspotConfiguration {
         let configuration = NEHotspotConfiguration(ssid: pairing.ssid, passphrase: pairing.password, isWEP: false)
         configuration.joinOnce = false
@@ -72,5 +74,16 @@ struct TransferTiming {
     var summary: String {
         func time(_ value: TimeInterval?) -> String { value.map { String(format: "%.3f s", $0) } ?? "not recorded" }
         return "Request to first byte: \(time(firstByte))\nResponse body: \(time(body))\nTLS handshake: \(time(tls))\nConnection reused: \(reused ? "yes" : "no")"
+    }
+}
+
+struct SenderReadMeasurement: Decodable {
+    let bytes: Int64
+    let calls: Int64
+    let readSeconds: Double
+
+    func summary(expectedBytes: Int64) -> String? {
+        guard bytes == expectedBytes, calls >= 0, readSeconds.isFinite, readSeconds >= 0 else { return nil }
+        return String(format: "Sender snapshot reads: %.3f s across %lld calls (%lld bytes)\nRead time includes buffered/cache reads; excludes TLS/socket writes. This is not a storage benchmark.", readSeconds, calls, bytes)
     }
 }
