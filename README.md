@@ -4,9 +4,9 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 
 **Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone scans a QR code, asks to join, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
 
-**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No throughput claims are established. Android builds and lint pass, the iPhone app compiles, and six pairing-validation/diagnostic tests passed on an iOS simulator.
+**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. A single measured offline run is recorded below; hardware-limit throughput has not been established. Android builds and lint pass, the iPhone app compiles, and six pairing-validation/diagnostic tests passed on an iOS simulator.
 
-**First device result, 13 November 2026:** the user reports successfully receiving a roughly 0.3 MB JPEG on the iPhone via manual Android-hotspot joining after the Android 0.1.2 repair. Automatic joining still fails. Larger-file speeds, repeated transfers, and a test with router access and mobile data explicitly disabled remain unverified. Exact bytes and completion metrics were not supplied.
+**Device results, 13 November 2026:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. An earlier roughly 0.3 MB JPEG was also received successfully.
 
 ## How the first device test works
 

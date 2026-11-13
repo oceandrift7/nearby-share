@@ -1,6 +1,6 @@
 # Build status — 13 November 2026
 
-**Latest physical-device report:** the user received a JPEG of approximately 0.3 MB on the iPhone after manually joining the Android hotspot. This is the first reported successful Android-to-iPhone transfer after the Android 0.1.2 TLS repair. Automatic joining still failed. Exact bytes, timing, transfer speed, and router/mobile-data conditions were not reported; this is a functional result, not a speed or fully offline benchmark. See `docs/device-tests.csv`.
+**Latest physical-device report:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. See `docs/device-tests.csv`.
 
 - Android `:app:assembleDebug`: passed on Windows, Java 17 / Gradle 8.9 / SDK 34.
 - Android `:app:lintDebug`: passed, 0 errors and 28 warnings. Remaining warnings concern untranslated prototype strings and platform metadata/attributes; they are not hidden by a lint baseline.
@@ -17,7 +17,7 @@
 
 Android APK SHA-256: `ba010f6a4f60397ff1cad8e1208da29ee99dbc3e4e3380a2907c0201df0f6360`
 
-This is an early prototype, not a validated cross-platform release. One reported small-file transfer does not establish reliability or performance. Next checks: a larger file with recorded completion metrics, repeated transfers, and explicit router/mobile-data disconnection. Automatic joining remains unresolved.
+This is an early prototype with one measured offline transfer. Next checks: repeatability, larger files, and connection diagnostics to explain the current speed. Automatic joining remains unresolved.
 
 Hosted evidence:
 
@@ -49,4 +49,4 @@ Validation for commit `38f7454f8f69119ce31cb78dde9d30d281d3dec5`:
 
 Evidence: [Android 10 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375044), [Android 12 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375231), [hosted build](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671374958).
 
-These tests reproduce and repair a concrete sender defect on Android emulators. The subsequent user report confirms receipt of one small JPEG on the iPhone via manual hotspot joining. iPhone 0.1.1 remains compatible. Larger-file performance, repeated-session reliability, and automatic joining still require validation. No transfer-speed claim is made.
+These tests reproduce and repair a concrete sender defect on Android emulators. Subsequent reports confirm a small JPEG transfer and the measured offline transfer recorded above. iPhone 0.1.1 remains compatible. The observed 6.1 MB/s is a single-run baseline; repeated-session reliability, larger-file performance, and automatic joining still require validation.
