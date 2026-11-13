@@ -1,5 +1,18 @@
 # Build status — 13 November 2026
 
+## Version 0.1.3 — connection flow and diagnostics
+
+Both platform packages built successfully at commit `58719318ed3d2c114efc7b62970fbeef593bcdec`. Hosted Android lint passed; iOS device compilation and packaging passed. All **14 iOS simulator tests** passed with zero failures, and all **6 Android TLS tests** passed on each of API 29 and API 31. [Build and test evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43366348363).
+
+Downloaded artifacts passed SHA-256 and ZIP integrity checks. Android APK v2 signature verified. IPA inspection confirmed version 0.1.3/build 4 and requested Hotspot Configuration entitlement metadata; SideStore still must re-sign it for installation.
+
+- Android APK SHA-256: `cdc4f519584ba82ba2bf2de7737c76bc08238881f3d767576ae5f6519caa43b9`.
+- iPhone IPA SHA-256: `b457d787ed4f97228beebe0ea844c80625855550de317c48dafd81abda733666`.
+
+The revised normal Wi-Fi join, return-from-Settings inspection, repeat-download UI, profile capability report, and transfer timings need physical-device validation. This revision does not establish a throughput improvement. The measured 6.1 MB/s below remains the baseline. Android reports 5 GHz hardware support; its actual hotspot channel is unavailable through the public APIs on the target Android 10/12 versions. The diagnostic report marks this unknown. The hosted debug APK has a different signer from 0.1.2, so uninstall the older Android prototype before installation. Existing original files remain unaffected.
+
+## Earlier validation and physical-device baseline
+
 **Latest physical-device report:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. See `docs/device-tests.csv`.
 
 - Android `:app:assembleDebug`: passed on Windows, Java 17 / Gradle 8.9 / SDK 34.
