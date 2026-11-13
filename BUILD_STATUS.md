@@ -1,9 +1,17 @@
-# Build status — 13 November 2026
+# Build status — 14 November 2026
 
 ## Version 0.1.5 — native visual update
 
-Adapted the supplied visual reference to SwiftUI and native Android widgets: blue connection card, pale background, rounded surfaces and clearer file/progress typography. No sample peer devices or simulated transfers are shown. Transport behavior is unchanged. Build checks and native screen captures are in progress; this is not a throughput optimization.
+Adapted the supplied visual reference to SwiftUI and native Android widgets: blue connection card, pale background, rounded surfaces and clearer file/progress typography. No sample peer devices or simulated transfers are shown. Transport behavior is unchanged. Hosted Android compilation/lint and iOS device compilation/packaging passed. All **10 Android tests passed on each of Android 10/API29 and Android 12/API31**; all **17 iOS simulator tests passed with zero failures**. Final workflow commit `a8635d87306dfa20efd8812d1c578046dd78784b`: [build, test and preview evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43526869013). Native first-screen captures from both platforms were inspected. The first preview attempts exposed automation issues (Android test uninstall and a shutdown iOS simulator), corrected by installing/booting explicitly. Earlier screenshot failures were not failed functional tests.
 
+The current Windows-local Gradle attempt could not connect to its daemon; validation uses the hosted builds above. Downloaded APK/IPA artifacts passed SHA-256/ZIP checks, APK signature verification and IPA version/entitlement inspection. Version is 0.1.5/build 6. Requested entitlement metadata still requires SideStore re-signing and does not enable an absent capability. The APK debug signer differs from the preceding build, requiring uninstall of the older Android prototype.
+
+This is a first visual adaptation, not a complete reproduction of the demo or a throughput optimization. Android uses native platform widgets; iPhone uses SwiftUI. The preview shows actual initial UI, not physical transfers. Physical-device review, large text, dark mode and mid-transfer visual review remain outstanding. No new throughput measurement is claimed.
+
+
+- Android package SHA-256: `8354e2de84f93f46ee79e53d7f303b65cdc49bd4aa998140f4a28df8455760a6`.
+
+- iPhone package SHA-256: `224e6a31135c44a45a30e16b674521ec17bf39f83df9b243d108471118758525`.
 
 ## Version 0.1.4 — Camera/Settings connection and sender read measurements
 
