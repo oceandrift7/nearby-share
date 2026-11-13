@@ -1,1 +1,2 @@
 date,sender,receiver,os_versions,app,bytes,preparation_seconds,pairing_seconds,transfer_seconds,verification_seconds,MB_per_second,verified,notes
+2026-11-13,Android phone,iPhone,,Android 0.1.2 / iOS 0.1.1 (builds supplied),,,,,,,user-reported receipt,"JPEG approximately 0.3 MB; file present on iPhone; manual hotspot joining succeeded; automatic joining failed; devices previously identified as A21s and iPhone 17 Pro Max but not reconfirmed in this result; exact bytes and completion metrics not supplied; router/mobile-data conditions not recorded"

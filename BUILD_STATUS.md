@@ -1,5 +1,7 @@
 # Build status — 13 November 2026
 
+**Latest physical-device report:** the user received a JPEG of approximately 0.3 MB on the iPhone after manually joining the Android hotspot. This is the first reported successful Android-to-iPhone transfer after the Android 0.1.2 TLS repair. Automatic joining still failed. Exact bytes, timing, transfer speed, and router/mobile-data conditions were not reported; this is a functional result, not a speed or fully offline benchmark. See `docs/device-tests.csv`.
+
 - Android `:app:assembleDebug`: passed on Windows, Java 17 / Gradle 8.9 / SDK 34.
 - Android `:app:lintDebug`: passed, 0 errors and 28 warnings. Remaining warnings concern untranslated prototype strings and platform metadata/attributes; they are not hidden by a lint baseline.
 - APK signature: verified with Android SDK apksigner (v2 signature).
@@ -9,13 +11,13 @@
 - iOS device compilation: **passed** on the GitHub macOS runner, without code signing.
 - iOS pairing-validation XCTest suite: **4 tests passed, 0 failures** on a simulator. These validate QR input handling, not physical networking or certificate pinning.
 - Android APK and unsigned iPhone IPA: packaged as GitHub Actions artifacts. Downloaded copies passed artifact digest and ZIP integrity checks; the iPhone bundle identifier is `org.nearbyshare.prototype`, minimum iOS 16. The IPA must be signed before installation.
-- Initial device report: the A21s generated a pairing QR, but the SideStore-installed iPhone app showed a generic internal error during automatic Wi-Fi joining. No completed file transfer or speed measurement has been demonstrated.
+- Initial device report: the A21s generated a pairing QR, but the SideStore-installed iPhone app showed a generic internal error during automatic Wi-Fi joining. This preceded the successful manual-join transfer described above.
 - iPhone-to-Android, iPhone-to-iPhone, and Windows client: **not implemented in this slice**.
 - No signing credential was requested or stored. Repository: https://github.com/oceandrift7/nearby-share. The checks above describe the original local build; current hosted checks appear in the repository's Actions tab.
 
 Android APK SHA-256: `ba010f6a4f60397ff1cad8e1208da29ee99dbc3e4e3380a2907c0201df0f6360`
 
-This is a compiled source prototype, not a validated cross-platform release. Build success does not establish radio interoperability or performance. Next step: configure iPhone signing, install the apps, then test A21s → iPhone offline.
+This is an early prototype, not a validated cross-platform release. One reported small-file transfer does not establish reliability or performance. Next checks: a larger file with recorded completion metrics, repeated transfers, and explicit router/mobile-data disconnection. Automatic joining remains unresolved.
 
 Hosted evidence:
 
@@ -27,7 +29,7 @@ Hosted evidence:
 
 Inspection of the original 0.1.0 IPA confirmed that its executable did not request the Hotspot Configuration entitlement, despite the entitlement being declared in the source project. SideSign reads requested entitlements from Mach-O (https://github.com/SideStore/SideSign/blob/main/Sources/Models/AppBundle.swift). This packaging gap is a plausible contributor to the automatic-join failure; the final installed signature/profile was not inspected, so it is not a confirmed sole root cause.
 
-The updated package embeds and checks requested hotspot entitlement metadata before re-signing. It still needs valid Apple signing/provisioning for installation. The receiver adds a manual Settings Wi-Fi join path that retains TLS pinning and authorization, plus error domain/code and phase diagnostics. Hardware validation of either recovery path is pending.
+The updated package embeds and checks requested hotspot entitlement metadata before re-signing. It still needs valid Apple signing/provisioning for installation. The receiver adds a manual Settings Wi-Fi join path that retains TLS pinning and authorization, plus error domain/code and phase diagnostics. Automatic joining remains unresolved; manual joining subsequently enabled the reported transfer after the Android TLS repair.
 
 Version 0.1.1 validation: device compilation passed, and six simulator tests passed with zero failures (https://github.com/oceandrift7/nearby-share/actions/runs/43357508843). The final packaging job passed its entitlement assertion; independent inspection of the downloaded IPA's Mach-O confirmed the requested capability is present (https://github.com/oceandrift7/nearby-share/actions/runs/43357708673). Artifact ZIP digest and archive integrity were checked.
 
@@ -47,4 +49,4 @@ Validation for commit `38f7454f8f69119ce31cb78dde9d30d281d3dec5`:
 
 Evidence: [Android 10 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375044), [Android 12 TLS tests](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671375231), [hosted build](https://github.com/oceandrift7/nearby-share/actions/runs/43360128255/job/131671374958).
 
-These reproduce and repair a concrete sender defect on Android emulators; they do not establish that the user's Samsung-to-iPhone transfer is successful. Physical-device confirmation is pending. Keep iPhone 0.1.1, scan the new Android QR, and use manual Settings joining for the separate automatic-join error. No transfer-speed claim is made.
+These tests reproduce and repair a concrete sender defect on Android emulators. The subsequent user report confirms receipt of one small JPEG on the iPhone via manual hotspot joining. iPhone 0.1.1 remains compatible. Larger-file performance, repeated-session reliability, and automatic joining still require validation. No transfer-speed claim is made.
