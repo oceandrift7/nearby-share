@@ -16,10 +16,25 @@ struct TransferView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Nearby 0.1.4").font(.title.bold())
-                    Text("First scan Android’s Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the Nearby pairing code here. Receive one file from the Android app. Keep both apps open. This build does not yet send files or connect two iPhones.")
-                    Button("Scan Android pairing code") { scanning = true }
-                        .buttonStyle(.borderedProminent).disabled(model.busy)
+                    HStack {
+                        Text("nearby.").font(.system(.largeTitle, design: .rounded).weight(.bold))
+                        Spacer()
+                        Label("Offline sharing", systemImage: "wifi").font(.caption.weight(.semibold))
+                            .padding(10).background(Color.blue.opacity(0.08), in: Capsule())
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Across the room.").font(.title2.bold())
+                        Text("Directly between your devices.").foregroundStyle(.secondary)
+                    }
+                    ReceiverHero(connected: model.manifest != nil, paired: model.pairing != nil)
+                    Button { scanning = true } label: {
+                        Label("Scan Android pairing code", systemImage: "qrcode.viewfinder")
+                            .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    }.buttonStyle(.borderedProminent).disabled(model.busy)
+                    DisclosureGroup("How to connect") {
+                        Text("First scan Android’s step 1 Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the step 2 Nearby pairing code here. Keep both apps open. This version receives one Android file; iPhone sending and iPhone-to-iPhone are still in development.")
+                            .font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
+                    }.nearbyCard()
                     if let pairing = model.pairing, model.manifest == nil {
                         Text("Connect to \(pairing.ssid)?").font(.headline)
                         Text("For the direct offline connection, scan Android's step 1 Wi-Fi code with the iPhone Camera, or join in Settings below. Keep Android open.")
@@ -49,18 +64,27 @@ struct TransferView: View {
                         }
                     }
                     if let file = model.manifest {
-                        Text(file.name).font(.headline)
-                        Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
+                        VStack(alignment: .leading, spacing: 16) {
+                            Label("Incoming file", systemImage: "doc.fill").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(file.name).font(.title3.bold()).textSelection(.enabled)
+                            Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)).foregroundStyle(.secondary)
                         if model.received == nil {
                             Button("Accept and receive file") { Task { await model.receive() } }
                                 .buttonStyle(.borderedProminent).disabled(model.busy)
                         }
+                        }.nearbyCard()
                     }
-                    if model.busy {
-                        ProgressView(value: model.progress)
+                    if model.busy && model.manifest == nil {
+                        ProgressView("Checking connection…")
                         Button("Cancel") { model.cancel() }
                     }
-                    Text(model.status).textSelection(.enabled)
+                    if model.busy && model.manifest != nil {
+                        Text(model.progress, format: .percent.precision(.fractionLength(0)))
+                            .font(.system(.largeTitle, design: .rounded).weight(.bold)).monospacedDigit()
+                        ProgressView(value: model.progress).tint(.blue)
+                        Button("Cancel") { model.cancel() }
+                    }
+                    Text(model.status).font(.subheadline).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).nearbyCard()
                     if let url = model.received {
                         ShareLink(item: url) { Label("Save or share received file", systemImage: "square.and.arrow.up") }
                         Button("Receive another copy") { Task { await model.receive() } }.disabled(model.busy)
@@ -75,8 +99,11 @@ struct TransferView: View {
                     if model.pairing != nil {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
-                }.padding()
-            }.navigationTitle("Nearby")
+                    Text("Nearby 0.1.5 · Android → iPhone").font(.caption).foregroundStyle(.secondary)
+                }.padding(20)
+            }.background(Color(uiColor: .systemGroupedBackground))
+                .toolbar(.hidden, for: .navigationBar)
+                .tint(.blue)
         }
         .sheet(isPresented: $scanning) {
             QRScanner { result in
@@ -98,5 +125,38 @@ struct TransferView: View {
                 if !model.busy && model.manifest == nil { Task { await model.connect(joinNetwork: false) } }
             }
         }
+    }
+}
+
+private struct ReceiverHero: View {
+    let connected: Bool
+    let paired: Bool
+    var body: some View {
+        VStack(spacing: 18) {
+            HStack {
+                Text("Your connection").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(connected ? "Verified" : paired ? "Pairing scanned" : "Ready to pair")
+                    .font(.caption.weight(.semibold)).padding(8)
+                    .background(.white.opacity(0.15), in: Capsule())
+            }
+            ZStack {
+                Circle().stroke(.white.opacity(0.12), lineWidth: 1).frame(width: 160, height: 160)
+                Circle().stroke(.white.opacity(0.18), lineWidth: 1).frame(width: 110, height: 110)
+                Image(systemName: connected ? "checkmark.shield.fill" : "iphone")
+                    .font(.system(size: 34)).padding(22)
+                    .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 24))
+            }.frame(height: 165).accessibilityHidden(true)
+            Text(connected ? "Connected to Android" : "Receive from Android").font(.title3.bold())
+            Text(connected ? "Certificate verified. Review the file below." : "Join the hotspot, then scan its pairing code.")
+                .font(.subheadline).multilineTextAlignment(.center).foregroundStyle(.white.opacity(0.85))
+        }.foregroundStyle(.white).padding(20).frame(maxWidth: .infinity)
+            .background(Color(red: 0.11, green: 0.31, blue: 0.94), in: RoundedRectangle(cornerRadius: 28))
+    }
+}
+
+private extension View {
+    func nearbyCard() -> some View {
+        padding(18).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
     }
 }

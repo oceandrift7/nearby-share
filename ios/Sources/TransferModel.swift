@@ -188,7 +188,7 @@ final class TransferModel: ObservableObject {
             }
             guard !cancelled else { try? FileManager.default.removeItem(at: result.url); throw CancellationError() }
             received = result.url; progress = 1
-            // Optional v0.1.4 instrumentation, outside the transfer timer. An old
+            // Optional v0.1.5 instrumentation, outside the transfer timer. An old
             // sender, missing record, or timeout must never fail a verified file.
             let statsRequest = makeRequest(pairing: pairing, host: host, path: "transfer-stats?id=\(transferID)", timeout: 2)
             if let (data, response) = try? await session.data(for: statsRequest),
@@ -233,12 +233,12 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.1.4", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.1.5", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {
             lines.append("File bytes: \(manifest.size)")
-            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.1.4)")
+            lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.1.5)")
             if let result {
                 lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds))
                 lines.append(result.timing.summary)

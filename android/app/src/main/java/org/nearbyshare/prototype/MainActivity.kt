@@ -5,6 +5,10 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -44,18 +48,44 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        layout.addView(TextView(this).apply { text = "Nearby • prototype 0.1.4"; textSize = 24f })
-        layout.addView(TextView(this).apply { text = "Android → iPhone only in this first build. Choose one file, then follow the two QR steps below. Keep both apps open. Anyone scanning the code can download the selected file until you stop." })
+        val ink = Color.rgb(22, 38, 61)
+        val blue = Color.rgb(28, 79, 240)
+        window.statusBarColor = Color.rgb(244, 247, 250)
+        window.navigationBarColor = Color.rgb(244, 247, 250)
+        window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(28))
+            setBackgroundColor(Color.rgb(244, 247, 250))
+        }
+        layout.addView(TextView(this).apply { text = "nearby."; textSize = 32f; setTextColor(ink); setTypeface(null, Typeface.BOLD) })
+        layout.addView(TextView(this).apply {
+            text = "Across the room."; textSize = 23f; setTextColor(ink); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(20), 0, dp(5))
+        })
+        layout.addView(TextView(this).apply { text = "Directly between your devices."; textSize = 15f; setTextColor(Color.rgb(84, 102, 122)) })
+        layout.addView(TextView(this).apply {
+            text = "SHARE OFFLINE\n\nAndroid  →  iPhone\n\nChoose a file. Connect. Send."
+            textSize = 19f; setTextColor(Color.WHITE); setPadding(dp(24), dp(24), dp(24), dp(24))
+            background = rounded(blue, 28)
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin=dp(24); bottomMargin=dp(18) })
         choose = Button(this).apply {
             text = "Choose a file"
             setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
             }, 10) }
         }
-        layout.addView(choose)
+        choose.setTextColor(Color.WHITE)
+        choose.backgroundTintList = ColorStateList.valueOf(blue)
+        choose.isAllCaps = false
+        choose.textSize = 17f
+        choose.minHeight = dp(58)
+        layout.addView(choose, LinearLayout.LayoutParams(-1, -2))
         layout.addView(Button(this).apply { text = "Stop sharing"; setOnClickListener { stopSharing() } })
-        status = TextView(this).apply { text = "Ready. No internet needed." }
+        status = TextView(this).apply {
+            text = "Ready. No internet needed."; textSize = 16f; setTextColor(ink)
+            setPadding(dp(18), dp(18), dp(18), dp(18)); background = rounded(Color.WHITE, 22)
+            accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         layout.addView(status)
         qrSteps = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -70,10 +100,19 @@ class MainActivity : Activity() {
             })
         }
         layout.addView(qrSteps)
-        qrHelp = TextView(this)
+        qrHelp = TextView(this).apply {
+            textSize = 15f; setTextColor(ink); setPadding(0, dp(16), 0, dp(12))
+        }
         layout.addView(qrHelp)
-        qr = ImageView(this)
-        layout.addView(qr, LinearLayout.LayoutParams(-1, 800))
+        qr = ImageView(this).apply {
+            adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.WHITE)
+        }
+        layout.addView(qr, LinearLayout.LayoutParams(-1, -2))
+        layout.addView(TextView(this).apply {
+            text = "Keep both apps open. Anyone scanning the Nearby pairing code can download your selected file until you stop sharing.\n\nNearby 0.1.5 · Android → iPhone"
+            textSize = 13f; setTextColor(Color.rgb(84, 102, 122)); setPadding(0, dp(20), 0, 0)
+        })
         setContentView(ScrollView(this).apply { addView(layout) })
     }
 
@@ -156,7 +195,7 @@ class MainActivity : Activity() {
                             // Public hotspot band/channel APIs are unavailable on our Android
                             // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
                             val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.1.4")
+                            val diagnostics = JSONObject().put("appVersion", "0.1.5")
                                 .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
                                 .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
                                 .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
@@ -205,6 +244,11 @@ class MainActivity : Activity() {
         } catch (e: SecurityException) {
             stopSharing(); status.text = "Hotspot permission was denied or revoked. Allow the requested permission, then retry."
         } catch (e: Exception) { stopSharing(); status.text = "Could not start hotspot: ${e.message}" }
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(radius).toFloat()
     }
 
     private fun qrBitmap(payload: String): Bitmap {

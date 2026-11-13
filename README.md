@@ -39,6 +39,10 @@ The iPhone's automatic Wi-Fi joining error is separate; use the manual Settings 
 
 Technical basis: [Android Keystore digest authorization for TLS](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setDigests(java.lang.String...)). `DIGEST_NONE` permits signing an already-computed digest; it does not remove the TLS transcript hash or disable encryption. EC signing also avoids the older RSA-PSS/raw-RSA provider path described in [Conscrypt issue 1201](https://github.com/google/conscrypt/issues/1201).
 
+## Native interface, version 0.1.5
+
+The supplied “relay.” recording is a visual reference: pale surfaces, a blue connection card, rounded action/file cards and large progress typography. This implementation uses SwiftUI on iPhone and Android platform widgets in Kotlin. No React Native runtime or Rust rewrite is introduced. Nearby keeps its current name. Real connection state replaces sample devices; file progress remains driven by downloaded bytes. iPhone sending, automatic discovery and multiple-file transfer remain unimplemented. The native UI still needs physical-phone review, including large text and small screens.
+
 ## Build
 
 ### Version 0.1.4: free-account connection flow and sender profiling

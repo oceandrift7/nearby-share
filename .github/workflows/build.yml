@@ -60,7 +60,16 @@ jobs:
           target: default
           disable-animations: true
           working-directory: android
-          script: gradle --no-daemon :app:connectedDebugAndroidTest
+          script: |
+            gradle --no-daemon :app:connectedDebugAndroidTest
+            adb shell am start -n org.nearbyshare.prototype/.MainActivity
+            sleep 3
+            adb shell screencap -p /sdcard/nearby-native.png
+            adb pull /sdcard/nearby-native.png android-native.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-native-ui-api-${{ matrix.api-level }}
+          path: android/android-native.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -100,6 +109,13 @@ jobs:
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
           xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun simctl launch "$DEVICE_ID" org.nearbyshare.prototype
+          sleep 3
+          xcrun simctl io "$DEVICE_ID" screenshot iphone-native.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-native-ui
+          path: ios/iphone-native.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

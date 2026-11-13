@@ -1,5 +1,10 @@
 # Build status — 13 November 2026
 
+## Version 0.1.5 — native visual update
+
+Adapted the supplied visual reference to SwiftUI and native Android widgets: blue connection card, pale background, rounded surfaces and clearer file/progress typography. No sample peer devices or simulated transfers are shown. Transport behavior is unchanged. Build checks and native screen captures are in progress; this is not a throughput optimization.
+
+
 ## Version 0.1.4 — Camera/Settings connection and sender read measurements
 
 Implemented two Android QR steps (system Wi-Fi code, secure Nearby pairing code), current-connection-first iPhone flow, and suppression of automatic join when the embedded profile reports the capability missing. The Settings fallback remains available. Added bounded per-download sender read timing and optional receiver collection after file verification. TLS pinning, authorization, and SHA-256 verification remain enabled. No physical speed improvement is claimed.

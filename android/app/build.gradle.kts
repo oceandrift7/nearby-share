@@ -6,8 +6,8 @@ android {
         applicationId = "org.nearbyshare.prototype"
         minSdk = 29
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.1.4-prototype"
+        versionCode = 6
+        versionName = "0.1.5-prototype"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
