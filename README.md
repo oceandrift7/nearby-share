@@ -13,7 +13,7 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 ## How the first device test works
 
 1. Install the Android debug APK on the A21s (the A6 is the next compatibility test).
-2. Install a properly signed iPhone build. The iOS bundle identifier is currently `org.nearbyshare.prototype`; adapt it to an identifier registered with your Apple developer team. Enable Hotspot Configuration for that identifier/profile.
+2. Install the iPhone IPA through your signing tool. The tested setup uses SideStore with a free Apple account and manual Wi-Fi joining. Automatic joining additionally requires Hotspot Configuration in the installed signature and profile; it is unavailable in the reported installation. No paid membership is required to continue testing the demonstrated manual transfer flow. The source bundle identifier is `org.nearbyshare.prototype`.
 3. Disable mobile data on both phones and disconnect from the home router. Keep Wi-Fi enabled. On Android 10–12, hotspot creation may also require Location enabled and the requested permission; the app does not read coordinates.
 4. On Android, choose a small, non-sensitive file. The app snapshots it in private cache and hashes it before offering it. This preparation requires additional disk space equal to the file size.
 5. On iPhone, scan the code in the prototype app, choose **Join and inspect file**, approve Wi-Fi and Local Network prompts, then choose **Accept and receive file**.
