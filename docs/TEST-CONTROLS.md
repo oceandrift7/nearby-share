@@ -14,4 +14,4 @@ Enable **capture_ui** only when you also need an initial native iPhone screensho
 
 These are software-path measurements over loopback on shared hosted machines. They do not measure hotspot radio speed, distance, interference, battery use, mobile-network outages or switching between actual Wi-Fi networks. They cannot establish SHAREit-level physical throughput. Comparisons between the Android upload and iOS download timers are not directly equivalent.
 
-The controls start automated runs; they do not provide an interactive remote phone or access to the user's physical devices. Real-phone baseline remains approximately 6.3 MB/s for the reported Android-to-iPhone hotspot transfer. Resume/network migration remain unimplemented.
+The controls start automated runs; they do not provide an interactive remote phone or access to the user's physical devices. Real-phone baseline remains approximately 6.3 MB/s for the reported Android-to-iPhone hotspot transfer. Android-to-iPhone resume is implemented in 0.3.0; reverse-direction resume and automatic network migration remain unimplemented.

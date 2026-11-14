@@ -1,5 +1,18 @@
 # Build status — 14 November 2026
 
+## Version 0.3.0 — Android-to-iPhone pause/resume
+
+Final source commit `9cabf18ff5341b78e5c88e3b83d173c01e612887`, [successful run 43651979691](https://github.com/oceandrift7/nearby-share/actions/runs/43651979691): Android build/lint, **26 tests on each API29/API31**, iOS device build, and **40 iOS simulator tests** passed with zero failures. Tests include production Android range reconstruction and headers, unchanged full downloads, current authorization/file preconditions, persistent checkpoint restoration, interrupted active chunk/pause/reconnect, final hash rejection, and wrong/ignored range rejection. A fresh client/session restored a checkpoint from disk after an actual truncated TLS response; no full camera-driven cross-platform or physical app-restart test is claimed.
+
+Both downloaded package artifact SHA-256 and ZIP checks passed. APK v2 signature verifies; IPA version/entitlement inspection confirms 0.3.0/build9 and requested capability metadata. SideStore signing is still required. No paid account or automatic hotspot capability is needed for the Camera/Settings flow.
+
+- APK SHA-256: `e15632e4fe1b59132b83d9b8ce532a0d0a040422d56940f276d8669b217a0e77`.
+- IPA SHA-256: `9b09c1862b65332bd823a028475acd735c5f283d9de43073fab8929df8af4bd9`.
+
+The final 64 MiB simulator benchmark verified the resumable path in **1.573 s / 42.662 MB/s**, plus **0.052 s** final checksum; **63 of 64 range requests reused connections**. The same hosted run's legacy path measured 0.138 s / 487.267 MB/s plus 0.060 s checksum. Checkpointing adds software/file-I/O overhead; these loopback timings are not physical phone throughput or a promise of unchanged phone speed. The initial fixture used HTTP/1.0 and forced fresh connections per piece (6.864 MB/s); it was corrected to persistent HTTP/1.1 to match the Android server. An idle/preconnected TCP client is also verified not to block the TLS fixture's listener. Physical speed, hotspot reconnection and app-restart checks remain outstanding.
+
+See [resume behavior and limits](docs/RESUME.md). Reverse-direction resume, automatic Wi-Fi migration, background execution and the complete native frontend remain unfinished.
+
 ## Android 0.2.1 — metadata and connection limits
 
 Final hosted run [43637607105](https://github.com/oceandrift7/nearby-share/actions/runs/43637607105), code commit `28ece849e47e3bd00c7005adb3b31e419d99d302`: Android compilation/lint passed; all **23 tests passed on each API29/API31**; all **27 iOS simulator tests passed**. New Android checks include 87 malformed/coercible metadata cases and recovery after eight idle clients fill the connection cap. Existing 64 MiB verified TLS uploads passed (hosted loopback 185.9/234.1 MB/s; these are not physical Wi-Fi rates or proof of a speed improvement).

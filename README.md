@@ -2,15 +2,23 @@
 
 Early source prototype for a free, open-source nearby file-sharing app. The name is temporary. No ads, analytics, accounts, or file-upload servers.
 
-Latest builds: Android 0.2.1 and iPhone 0.2.1. Android hardening rejects coerced offer metadata and caps active connections at eight; see [validation and limitations](docs/ANDROID-HARDENING.md).
+Latest builds: **Android 0.3.0 and iPhone 0.3.0**. Android → iPhone downloads can pause and resume from private, durable checkpoints after reconnecting or re-pairing to the same unchanged file. Final whole-file integrity verification is mandatory. See [resume instructions, validation and limitations](docs/RESUME.md). Physical testing of this feature is still required; no speed improvement is claimed.
 
 **Version 0.2.0:** one-file transfers in **both directions between Android and iPhone**, over Android's local-only Wi-Fi hotspot and pinned HTTPS. Android can either offer a selected file, or open a receive session. In receive mode, the iPhone chooses a file and Android explicitly accepts/rejects the offer. The receiver verifies the byte count and SHA-256 before reporting a saved file. No internet or paid Apple account is required for the Camera/Settings connection flow.
 
-**Not implemented:** iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No speed improvement is claimed. The ~6.4 MB/s physical result below is an earlier Android-to-iPhone test; the reverse direction needs testing on phones. See BUILD_STATUS.md for build/test evidence.
+**Not implemented:** iPhone-to-iPhone, Windows client, iPhone-to-Android resume, automatic Wi-Fi migration, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No speed improvement is claimed. The ~6.4 MB/s physical result below is an earlier Android-to-iPhone test; the reverse direction needs testing on phones. See BUILD_STATUS.md for build/test evidence.
 
 **Device results, 13 November 2026:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. An earlier roughly 0.3 MB JPEG was also received successfully.
 
 **0.1.3 comparison:** the same 105,575,757-byte file completed in 246.975 s (0.427 MB/s) on home Wi-Fi and 16.547 s (6.380 MB/s) on the Android hotspot. Both passed verification. The installed profile reports no Hotspot Configuration capability; the user confirmed signing with a different/free account. The faster hotspot path still required manual joining. See BUILD_STATUS.md for timings and limitations.
+
+## Pause and resume Android-to-iPhone downloads (0.3.0)
+
+Update both apps. Use the existing hotspot/Camera/Settings pairing flow and accept a file on iPhone. **Pause download** retains completed 1 MiB pieces; **Resume download** continues from that checkpoint. A connection error also retains progress. After reopening iPhone Nearby, scan and inspect the same Android file again to see its saved progress. If Android sharing restarted, reselect the same unchanged file and scan its fresh pairing code. Changed content or sender identity cannot reuse the old checkpoint.
+
+**Cancel and discard** removes current saved progress. **Discard all incomplete downloads** frees all checkpoint storage without deleting completed files. Uninstalling iPhone Nearby removes checkpoints; uninstalling Android changes its sender identity, so checkpoints for that prior identity cannot be reused. Keep both apps open during transfer. Automatic migration between Wi-Fi networks and reverse-direction resume remain unfinished.
+
+The finished file is moved into Documents only after verifying its entire hash. Speed counts only bytes transferred during the current attempt, including checkpoint writes, and reports reused bytes separately. Checkpointing adds overhead; real-phone speed needs measuring.
 
 ## Send from iPhone to Android (0.2.0)
 
