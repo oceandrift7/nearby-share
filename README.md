@@ -2,13 +2,23 @@
 
 Early source prototype for a free, open-source nearby file-sharing app. The name is temporary. No ads, analytics, accounts, or file-upload servers.
 
-**Implemented slice:** Android offers one selected file over a local-only Wi-Fi hotspot and pinned HTTPS; iPhone joins through Camera or Settings, scans a secure pairing QR, previews the file, and downloads it to disk with SHA-256 verification. It displays download speed and verification time separately.
+**Version 0.2.0:** one-file transfers in **both directions between Android and iPhone**, over Android's local-only Wi-Fi hotspot and pinned HTTPS. Android can either offer a selected file, or open a receive session. In receive mode, the iPhone chooses a file and Android explicitly accepts/rejects the offer. The receiver verifies the byte count and SHA-256 before reporting a saved file. No internet or paid Apple account is required for the Camera/Settings connection flow.
 
-**Not implemented:** iPhone sending, iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. Measured device runs are recorded below; hardware-limit throughput has not been established. Version 0.1.4 adds a two-code Camera/Settings connection flow and sender read timings. See BUILD_STATUS.md for validation; the physical measurements below are from earlier builds. Device testing confirms transfers via manual joining; the installed free-account signing profile omits Hotspot Configuration, so automatic joining remains unresolved.
+**Not implemented:** iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No speed improvement is claimed. The ~6.4 MB/s physical result below is an earlier Android-to-iPhone test; the reverse direction needs testing on phones. See BUILD_STATUS.md for build/test evidence.
 
 **Device results, 13 November 2026:** The user reports a fully offline Android-to-iPhone transfer using manual hotspot joining. The supplied completion screenshot shows a 64.2 MB file, transfer time 10.47 s, 6.1 MB/s, checksum time 0.07 s, and "Verified complete". Preparation and Wi-Fi setup are excluded from the displayed speed. Exact bytes and negotiated Wi-Fi band/link rate were not captured. Automatic joining remains unresolved. This is one measured run; repeated and larger-file tests remain outstanding. An earlier roughly 0.3 MB JPEG was also received successfully.
 
 **0.1.3 comparison:** the same 105,575,757-byte file completed in 246.975 s (0.427 MB/s) on home Wi-Fi and 16.547 s (6.380 MB/s) on the Android hotspot. Both passed verification. The installed profile reports no Hotspot Configuration capability; the user confirmed signing with a different/free account. The faster hotspot path still required manual joining. See BUILD_STATUS.md for timings and limitations.
+
+## Send from iPhone to Android (0.2.0)
+
+Update **both apps**. On Android tap **Receive from iPhone**. Join its temporary hotspot using the iPhone Camera Wi-Fi QR or Settings, then scan Android's step 2 Nearby pairing code inside the iPhone app. Tap **Inspect current connection**, then **Choose file to send to Android**. Choose a locally available file from Files. Android shows the offered name/size; tap **Accept incoming file** there. Neither the offer nor network pairing automatically authorizes saving a file.
+
+Keep both apps open until Android shows **Verified complete** and iPhone reports Android's verified acknowledgement. On Android, **Save received file** exports it through the system picker. **Saved incoming files** recovers verified files for export after stopping/restarting the app. Received originals are private app data and are deleted if you uninstall or clear app storage, so export them first. Current hosted debug builds can require uninstalling an older APK because their signing keys differ; stable release signing is still outstanding.
+
+Cancel on iPhone or Stop sharing on Android discards an incomplete incoming file. A cancellation or lost acknowledgement after Android has already saved a verified file does not delete that completed file: check Android before retrying. Rejection, cancellation and storage failures are reported; no automatic resume is implemented. The iPhone snapshots/hashes the selected file off the UI thread, requiring extra local space equal to the file size. Android writes uploads directly to a partial file while hashing, then renames only verified content. Files must already be available locally for fully offline sending (cloud-only Files items need downloading first).
+
+Rotation preserves the Android session; leaving the foreground or process termination is not guaranteed. Large transfer/interrupt tests on actual phones remain required.
 
 ## How the first device test works
 
@@ -21,7 +31,7 @@ Early source prototype for a free, open-source nearby file-sharing app. The name
 7. Wait for **Verified complete**, record the speed, and use **Save or share received file**. Files also appear under On My iPhone → Nearby prototype.
 8. Stop sharing on Android and disconnect on iPhone. Stop invalidates the old code and deletes the sender's private snapshot. Received files remain until manually deleted.
 
-Keep both apps in the foreground and both screens awake. Do not share screenshots of the pairing code: it includes temporary Wi-Fi credentials and authorizes downloading the selected file. This prototype uses possession of the scanned code as sender consent, rather than a second prompt on Android. Select only the file you intend to offer. Stop sharing when finished. This is a functional test build, not a security-audited release.
+Keep both apps in the foreground and both screens awake. Do not share screenshots of the pairing code: it includes temporary Wi-Fi credentials and authorizes downloading the selected file. In Android sending mode, possession of the scanned code acts as sender consent. Android receiving mode additionally requires an explicit acceptance for each incoming offer. Select only the file you intend to offer. Stop sharing when finished. This is a functional test build, not a security-audited release.
 
 ### If iPhone joining fails
 
@@ -41,7 +51,7 @@ Technical basis: [Android Keystore digest authorization for TLS](https://develop
 
 ## Native interface, version 0.1.5
 
-The supplied “relay.” recording is a visual reference: pale surfaces, a blue connection card, rounded action/file cards and large progress typography. This implementation uses SwiftUI on iPhone and Android platform widgets in Kotlin. No React Native runtime or Rust rewrite is introduced. Nearby keeps its current name. Real connection state replaces sample devices; file progress remains driven by downloaded bytes. iPhone sending, automatic discovery and multiple-file transfer remain unimplemented. The native UI still needs physical-phone review, including large text and small screens.
+The supplied “relay.” recording is a visual reference: pale surfaces, a blue connection card, rounded action/file cards and large progress typography. This implementation uses SwiftUI on iPhone and Android platform widgets in Kotlin. No React Native runtime or Rust rewrite is introduced. Nearby keeps its current name. Real connection state replaces sample devices; file progress remains driven by downloaded bytes. At 0.1.5, iPhone sending, automatic discovery and multiple-file transfer were unimplemented; 0.2.0 adds iPhone sending. The native UI still needs physical-phone review, including large text and small screens.
 
 ## Build
 
@@ -84,7 +94,20 @@ Android serves HTTPS on port 9443 with an Android Keystore key and self-signed c
 - `GET /manifest` → `{ "name": "example.mp4", "size": 123, "sha256": "..." }`
 - `GET /file` → raw file bytes with fixed content length and `Cache-Control: no-store`.
 - Optional `GET /transfer-stats?id=<download UUID>` → `{ "bytes": 123, "calls": 1, "readSeconds": 0.001 }`. The receiver sets `X-Nearby-Transfer-ID` on `/file`; only completed stream records are returned, otherwise 404. Partial byte counts are rejected by the receiver.
-- Other methods or missing/incorrect token → 403; unknown paths → 404.
+- Missing/incorrect token → 403; unknown paths → 404. Unsupported methods are rejected.
+
+### Receive-mode extension (0.2.0)
+
+The pairing QR remains v1. `/manifest` adds `mode: "send"` or `"receive"`; absence means the legacy sending mode. The receiving manifest retains placeholder file fields for schema compatibility; new clients use the mode to show the correct action. Use 0.2.0 on both sides for reverse transfers.
+
+All routes below require the same bearer token and pinned TLS. Requests use fixed Content-Length; chunked uploads are rejected. Connections close after each offer/upload request so unread rejected bodies cannot be parsed as subsequent requests.
+
+- `POST /offer`: bounded (4 KiB) JSON `{name, size, sha256}`. Returns a random offer UUID and `waiting` state. One active offer at a time; a busy session returns 409; insufficient storage returns 507.
+- `GET /offer?id=<UUID>`: current `waiting`, `accepted`, `receiving`, `complete`, `rejected`, `cancelled`, or `failed` state. Receipt fields include `id`, `state`, `bytes`, `size`, `sha256`, and optional `error`.
+- `PUT /upload?id=<UUID>`: raw bytes, allowed only after Android acceptance. Fixed length must equal the accepted size; stream to disk with a 256 KiB buffer, hash while writing, save under a random local path. Final 200 receipt is sent only after verified saving. Original names are labels, never paths.
+- `DELETE /offer?id=<UUID>`: revoke an unfinished offer/upload. Completed files remain saved. Stopping the session closes active streams and invalidates the pairing.
+
+iPhone checks the final receipt's ID, completed state, size, transferred count and hash. HTTP success alone is insufficient. Both peers preflight available storage; write-time failures still discard partial data. iPhone metadata and receipt bodies are bounded while being read, rather than checking only after buffering the entire response.
 
 Android's snapshot prevents changes between hashing and sending. Transfers use bounded-size buffers rather than retaining the entire file in RAM. iOS saves into its Documents folder only after verifying size and hash. Original names are sanitized and prefixed with a random ID. The HTTP server still needs profiling; this prototype is not proof that its transport reaches hardware limits.
 

@@ -36,13 +36,14 @@ class ReceiveInboxTest {
             }
             server.start(3000, true)
         }
-        fun request(method: String, path: String, body: ByteArray = byteArrayOf(), token: String = "secret", length: Int = body.size): Pair<Int, String> {
+        fun request(method: String, path: String, body: ByteArray = byteArrayOf(), token: String = "secret", length: Int = body.size, sendBody: Boolean = true): Pair<Int, String> {
             val socket = ssl?.socketFactory?.createSocket("127.0.0.1", server.listeningPort) ?: Socket("127.0.0.1", server.listeningPort)
             return socket.use {
                 it.soTimeout = 5000
                 it.outputStream.write(("$method $path HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer $token\r\nContent-Length: $length\r\nConnection: close\r\n\r\n").toByteArray())
-                it.outputStream.write(body); it.outputStream.flush()
-                if (length > body.size) it.shutdownOutput()
+                if (sendBody) it.outputStream.write(body)
+                it.outputStream.flush()
+                if (sendBody && length > body.size) it.shutdownOutput()
                 val response = it.inputStream.readBytes().toString(Charsets.UTF_8)
                 response.substringBefore("\r\n").split(" ")[1].toInt() to response.substringAfter("\r\n\r\n")
             }
@@ -58,7 +59,9 @@ class ReceiveInboxTest {
         Fixture(tls = true).use { f ->
             val bytes = ByteArray(900_001) { (it % 251).toByte() }
             val id = f.offer(bytes, name = "../../photo.jpg")
-            assertEquals(409, f.request("PUT", "/upload?id=$id", bytes).first)
+            // A refused upload closes without draining its body. Send only the
+            // headers here; writing 900 KiB after refusal can correctly reset TLS.
+            assertEquals(409, f.request("PUT", "/upload?id=$id", bytes, sendBody = false).first)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
             f.inbox.decide(true)
             val response = f.request("PUT", "/upload?id=$id", bytes)
@@ -70,7 +73,7 @@ class ReceiveInboxTest {
             val saved = f.inbox.snapshot()!!.saved!!
             assertEquals(f.directory.canonicalPath, saved.parentFile!!.canonicalPath)
             assertArrayEquals(bytes, saved.readBytes())
-            assertEquals(409, f.request("PUT", "/upload?id=$id", bytes).first)
+            assertEquals(409, f.request("PUT", "/upload?id=$id", bytes, sendBody = false).first)
             assertEquals("complete", JSONObject(f.request("GET", "/offer?id=$id").second).getString("state"))
         }
     }
@@ -124,6 +127,24 @@ class ReceiveInboxTest {
             f.inbox.decide(true)
             assertEquals(200, f.request("PUT", "/upload?id=$id").first)
             assertEquals(0L, f.inbox.snapshot()!!.saved!!.length())
+        }
+    }
+    @Test fun stoppingAnActiveUploadDiscardsItsPartialFile() {
+        Fixture().use { f ->
+            val bytes = ByteArray(2_000_000) { 7 }
+            val id = f.offer(bytes); f.inbox.decide(true)
+            Socket("127.0.0.1", f.server.listeningPort).use { socket ->
+                socket.outputStream.write(("PUT /upload?id=$id HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray())
+                socket.outputStream.write(bytes, 0, 300_000); socket.outputStream.flush()
+                val deadline = System.nanoTime() + 3_000_000_000
+                while ((f.inbox.snapshot()?.bytes ?: 0) == 0L && System.nanoTime() < deadline) Thread.sleep(10)
+                assertTrue((f.inbox.snapshot()?.bytes ?: 0) > 0)
+                f.inbox.close()
+                val cleanup = System.nanoTime() + 3_000_000_000
+                while (!f.directory.listFiles().isNullOrEmpty() && System.nanoTime() < cleanup) Thread.sleep(10)
+                assertTrue(f.directory.listFiles().isNullOrEmpty())
+                assertEquals("cancelled", f.inbox.snapshot()!!.state)
+            }
         }
     }
     companion object {

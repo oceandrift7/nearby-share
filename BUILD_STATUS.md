@@ -1,5 +1,12 @@
 # Build status — 14 November 2026
 
+## Version 0.2.0 — approved iPhone-to-Android transfers
+
+Adds native iPhone file selection/snapshot preparation and disk-backed HTTPS upload; Android receive mode, per-file acceptance/rejection, streaming size/hash verification, final acknowledgement, and persistent verified-file export. Existing Android-to-iPhone flow remains available. Also adds free-space checks, cancellation during snapshot/hash loops, bounded iOS metadata reads, a shorter repeated-address probe budget, and Android rotation handling. Background survival and stable release signing remain outstanding.
+
+Build/test validation is in progress. Automated checks are not a physical device test and establish no new throughput result. The last physical hotspot measurement remains 6.380 MB/s in the Android-to-iPhone direction. Keep both apps in the foreground; restart interrupted transfers from the beginning. Export Android received files before uninstalling any prototype.
+
+
 ## Version 0.1.5 — native visual update
 
 Adapted the supplied visual reference to SwiftUI and native Android widgets: blue connection card, pale background, rounded surfaces and clearer file/progress typography. No sample peer devices or simulated transfers are shown. Transport behavior is unchanged. Hosted Android compilation/lint and iOS device compilation/packaging passed. All **10 Android tests passed on each of Android 10/API29 and Android 12/API31**; all **17 iOS simulator tests passed with zero failures**. Final workflow commit `a8635d87306dfa20efd8812d1c578046dd78784b`: [build, test and preview evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43526869013). Native first-screen captures from both platforms were inspected. The first preview attempts exposed automation issues (Android test uninstall and a shutdown iOS simulator), corrected by installing/booting explicitly. Earlier screenshot failures were not failed functional tests.
