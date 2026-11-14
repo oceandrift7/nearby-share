@@ -4,6 +4,14 @@ on:
     paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      file_mib:
+        description: 'Transfer test size in MiB (simulator/emulator, not physical Wi-Fi)'
+        type: choice
+        default: '64'
+        options: ['8', '64', '256']
+env:
+  BENCHMARK_MIB: ${{ inputs.file_mib || '64' }}
 permissions:
   contents: read
 jobs:
@@ -61,12 +69,18 @@ jobs:
           disable-animations: true
           working-directory: android
           script: |
-            gradle --no-daemon :app:connectedDebugAndroidTest
+            python3 -c 'import os; assert os.environ["BENCHMARK_MIB"] in ("8", "64", "256")'
+            gradle --no-daemon :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.benchmarkMiB=$BENCHMARK_MIB"
+            adb logcat -d -v raw -s NEARBY_BENCHMARK:I > android-transfer-benchmark.txt
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -W -n org.nearbyshare.prototype/.MainActivity
             sleep 3
             adb shell screencap -p /sdcard/nearby-native.png
             adb pull /sdcard/nearby-native.png android-native.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-transfer-benchmark-api-${{ matrix.api-level }}
+          path: android/android-transfer-benchmark.txt
       - uses: actions/upload-artifact@v4
         with:
           name: android-native-ui-api-${{ matrix.api-level }}
@@ -113,12 +127,17 @@ jobs:
         shell: bash
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
-          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test | tee simulator-test.log
+          python3 -c 'from pathlib import Path; lines=Path("simulator-test.log").read_text().splitlines(); report=[s[s.index("NEARBY_BENCHMARK ")+17:] for s in lines if "NEARBY_BENCHMARK " in s]; assert report, "Missing benchmark result"; Path("iphone-transfer-benchmark.jsonl").write_text("\n".join(report)+"\n")'
           xcrun simctl bootstatus "$DEVICE_ID" -b
           xcrun simctl install "$DEVICE_ID" build-simulator/Build/Products/Debug-iphonesimulator/NearbyPrototype.app
           xcrun simctl launch "$DEVICE_ID" org.nearbyshare.prototype
           sleep 3
           xcrun simctl io "$DEVICE_ID" screenshot iphone-native.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-transfer-benchmark
+          path: ios/iphone-transfer-benchmark.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: iphone-native-ui
