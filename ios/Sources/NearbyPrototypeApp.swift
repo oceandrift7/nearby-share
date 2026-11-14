@@ -106,7 +106,7 @@ struct TransferView: View {
                     if model.pairing != nil {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
-                    Text("Nearby 0.2.0 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
+                    Text("Nearby 0.2.1 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
             }.background(Color(uiColor: .systemGroupedBackground))
                 .toolbar(.hidden, for: .navigationBar)

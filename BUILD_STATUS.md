@@ -1,5 +1,9 @@
 # Build status — 14 November 2026
 
+## iPhone 0.2.1 — streamed metadata certificate handling
+
+Passes the certificate-pinning delegate explicitly to async streaming metadata requests and handles task-level authentication challenges with the same exact certificate pin. Adds a real loopback self-signed HTTPS test on the iOS simulator, including wrong-pin rejection. The scanner keeps Wi-Fi codes in view with explicit Camera/step-2 instructions. Compatible with Android 0.2.0; no Android reinstall required. Validation pending. Offline-route and timeout errors remain separate from certificate authentication.
+
 ## Version 0.2.0 — approved iPhone-to-Android transfers
 
 Adds native iPhone file selection/snapshot preparation and disk-backed HTTPS upload; Android receive mode, per-file acceptance/rejection, streaming size/hash verification, final acknowledgement, and persistent verified-file export. Existing Android-to-iPhone flow remains available. Also adds free-space checks, cancellation during snapshot/hash loops, bounded iOS metadata reads, a shorter repeated-address probe budget, and Android rotation handling. Background survival and stable release signing remain outstanding.

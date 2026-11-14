@@ -276,7 +276,7 @@ final class TransferModel: ObservableObject {
             let seconds = max(ProcessInfo.processInfo.systemUptime - start, 0.001)
             progress = 1
             status = String(format: "Android verified and saved the file. %.2f s · %.1f MB/s. Tap Save received file on Android to choose a location.", seconds, Double(file.size) / seconds / 1_000_000)
-            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.2.0\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
+            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.2.1\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
         } catch {
             // Best effort revoke even after the original session was cancelled.
             // Android also discards incomplete uploads when its socket closes.
@@ -333,7 +333,7 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.2.0", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.2.1", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {
