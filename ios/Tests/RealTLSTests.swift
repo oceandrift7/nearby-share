@@ -3,6 +3,38 @@ import CryptoKit
 @testable import NearbyPrototype
 
 final class RealTLSTests: XCTestCase {
+    func testResumableTLSDownloadSpeedAndIntegrity() async throws {
+        let bundle = Bundle(for: Self.self)
+        let certificate = try Data(contentsOf: XCTUnwrap(bundle.url(forResource: "localhost", withExtension: "der")))
+        let settings = try JSONSerialization.jsonObject(with: Data(contentsOf: XCTUnwrap(bundle.url(forResource: "benchmark", withExtension: "json")))) as! [String: Int]
+        let mib = try XCTUnwrap(settings["mib"])
+        XCTAssertTrue([8, 64, 256].contains(mib))
+        let chunk = Data(repeating: 90, count: 262144)
+        var hash = SHA256(); for _ in 0..<(mib*4) { hash.update(data: chunk) }
+        let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        let pin = SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agent = PinnedReceiver(pin: pin)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.connectionProxyDictionary = [:]
+        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
+        let session = URLSession(configuration: configuration, delegate: agent, delegateQueue: queue)
+        defer { session.invalidateAndCancel() }
+        let size = Int64(mib)*1024*1024
+        let saved = try await ResumableDownload.receive(pin: pin,
+            manifest: Manifest(name: "benchmark.bin", size: size, sha256: digest, diagnostics: nil),
+            request: URLRequest(url: URL(string: "https://127.0.0.1:19443/benchmark-range")!), session: session,
+            agent: agent, cancellation: TransferCancellation(), directory: directory) { _ in }
+        defer { try? FileManager.default.removeItem(at: saved.url) }
+        XCTAssertEqual(saved.resumedBytes, 0)
+        let report: [String: Any] = ["platform":"iOS simulator", "path":"resumable production receiver; Python TLS fixture", "bytes":size,
+            "seconds":saved.seconds, "checksumSeconds":saved.verificationSeconds, "MBps":Double(size)/saved.seconds/1e6,
+            "verified":true, "physicalWiFi":false, "resumable":true]
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        print("NEARBY_BENCHMARK " + String(decoding:data,as:UTF8.self))
+        let attachment = XCTAttachment(data:data,uniformTypeIdentifier:"public.json")
+        attachment.name = "iOS-resumable-benchmark.json"; attachment.lifetime = .keepAlways; add(attachment)
+    }
     func testRealTLSDownloadRejectsWrongHashAndTruncatedFileWithoutSaving() async throws {
         let certificate = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "localhost", withExtension: "der")))
         let pin = SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()

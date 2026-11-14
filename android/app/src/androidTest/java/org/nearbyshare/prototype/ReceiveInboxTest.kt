@@ -16,10 +16,11 @@ import javax.net.ssl.X509TrustManager
 
 @RunWith(AndroidJUnit4::class)
 class ReceiveInboxTest {
-    class Fixture(val space: () -> Long = { Long.MAX_VALUE }, tls: Boolean = false, sessionToken: String = "secret") : AutoCloseable {
+    class Fixture(val space: () -> Long = { Long.MAX_VALUE }, tls: Boolean = false, sessionToken: String = "secret",
+                  outgoing: File? = null, outgoingManifest: JSONObject = JSONObject().put("mode", "receive")) : AutoCloseable {
         val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "inbox-test-${java.util.UUID.randomUUID()}")
         val inbox = ReceiveInbox(directory, space)
-        val server = SharedFileServer(0, sessionToken, null, JSONObject().put("mode", "receive"), inbox) {}
+        val server = SharedFileServer(0, sessionToken, outgoing, outgoingManifest, inbox) {}
         private var ssl: SSLContext? = null
         fun socket(): Socket = ssl?.socketFactory?.createSocket("127.0.0.1", server.listeningPort) ?: Socket("127.0.0.1", server.listeningPort)
         init {

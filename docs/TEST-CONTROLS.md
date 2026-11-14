@@ -4,6 +4,8 @@ Open https://github.com/oceandrift7/nearby-share/actions/workflows/build.yml whi
 
 Open the resulting run to see live job logs and pass/fail results. You can cancel a run from that page. When it finishes, download `android-transfer-benchmark-api-29`, `android-transfer-benchmark-api-31`, and `iphone-transfer-benchmark`. The iOS XCTest result bundle also retains its JSON measurement as an attachment. APK and IPA artifacts are build outputs, not proof of a device transfer.
 
+Enable **capture_ui** only when you also need an initial native iPhone screenshot. It defaults off so a separate preview boot does not delay transfer-test results. The iPhone benchmark artifact includes both legacy and resumable download measurements in 0.3.0; both use hosted loopback, not physical Wi-Fi.
+
 ## What this exercises
 
 - Android: real Keystore-pinned TLS upload into the production Android receive server, explicit acceptance, streaming hashing, disk save and verified acknowledgement. Reports time and MB/s including TLS connection and verification.

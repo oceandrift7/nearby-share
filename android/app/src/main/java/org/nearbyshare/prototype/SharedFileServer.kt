@@ -19,9 +19,30 @@ class SharedFileServer(port: Int, private val token: String, private val file: F
         if (session.method != Method.GET)
             return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "GET required").also { it.addHeader("Connection", "close") }
         val response = when (session.uri) {
-            "/manifest" -> newFixedLengthResponse(Response.Status.OK, "application/json", manifest.toString())
+            "/manifest" -> newFixedLengthResponse(Response.Status.OK, "application/json",
+                JSONObject(manifest.toString()).put("supportsResume", file != null).toString())
             "/file" -> {
                 if (file == null) return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "No outgoing file")
+                val rangeHeader = session.headers["range"]
+                if (rangeHeader != null) {
+                    val etag = "\"${manifest.optString("sha256")}\""
+                    if (session.headers["if-match"] != etag)
+                        return newFixedLengthResponse(Response.Status.PRECONDITION_FAILED, "text/plain", "File changed").also { it.addHeader("Cache-Control", "no-store") }
+                    val match = Regex("bytes=([0-9]+)-([0-9]+)").matchEntire(rangeHeader)
+                    val start = match?.groupValues?.get(1)?.toLongOrNull()
+                    val end = match?.groupValues?.get(2)?.toLongOrNull()
+                    if (start == null || end == null || start < 0 || end < start || end >= file.length() || end - start >= 4L * 1024 * 1024)
+                        return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "Invalid range").also {
+                            it.addHeader("Content-Range", "bytes */${file.length()}"); it.addHeader("Cache-Control", "no-store")
+                        }
+                    onFileRequested()
+                    val source = file.inputStream()
+                    source.channel.position(start)
+                    return newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, "application/octet-stream", source.buffered(262144), end - start + 1).also {
+                        it.addHeader("Content-Range", "bytes $start-$end/${file.length()}")
+                        it.addHeader("ETag", etag); it.addHeader("Accept-Ranges", "bytes"); it.addHeader("Cache-Control", "no-store")
+                    }
+                }
                 onFileRequested()
                 val id = session.headers["x-nearby-transfer-id"]
                 val input = file.inputStream().buffered(262144)

@@ -10,6 +10,10 @@ on:
         type: choice
         default: '64'
         options: ['8', '64', '256']
+      capture_ui:
+        description: 'Also boot/install the iPhone app for a native screen capture'
+        type: boolean
+        default: false
 env:
   BENCHMARK_MIB: ${{ inputs.file_mib || '64' }}
 permissions:
@@ -103,6 +107,8 @@ jobs:
       - run: brew install xcodegen
       - run: xcodegen generate
         working-directory: ios
+      - name: Check TLS fixture handles idle clients
+        run: python3 scripts/tls_fixture.py check
       - run: xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -sdk iphoneos -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
         working-directory: ios
       - name: Package unsigned iPhone build for later signing
@@ -129,6 +135,11 @@ jobs:
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
           xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test | tee simulator-test.log
           python3 -c 'from pathlib import Path; lines=Path("simulator-test.log").read_text().splitlines(); report=[s[s.index("NEARBY_BENCHMARK ")+17:] for s in lines if "NEARBY_BENCHMARK " in s]; assert report, "Missing benchmark result"; Path("iphone-transfer-benchmark.jsonl").write_text("\n".join(report)+"\n")'
+      - name: Capture native iPhone screen
+        if: ${{ inputs.capture_ui == true }}
+        working-directory: ios
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
           xcrun simctl bootstatus "$DEVICE_ID" -b
           xcrun simctl install "$DEVICE_ID" build-simulator/Build/Products/Debug-iphonesimulator/NearbyPrototype.app
           xcrun simctl launch "$DEVICE_ID" org.nearbyshare.prototype
@@ -139,6 +150,7 @@ jobs:
           name: iphone-transfer-benchmark
           path: ios/iphone-transfer-benchmark.jsonl
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.capture_ui == true }}
         with:
           name: iphone-native-ui
           path: ios/iphone-native.png

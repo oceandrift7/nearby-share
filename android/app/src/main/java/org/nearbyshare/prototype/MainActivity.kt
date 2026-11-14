@@ -159,7 +159,7 @@ class MainActivity : Activity() {
         }
         layout.addView(qr, LinearLayout.LayoutParams(-1, -2))
         layout.addView(TextView(this).apply {
-            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.2.1 · Android ↔ iPhone"
+            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.3.0 · Android ↔ iPhone"
             textSize = 13f; setTextColor(Color.rgb(84, 102, 122)); setPadding(0, dp(20), 0, 0)
         })
         setContentView(ScrollView(this).apply { addView(layout) })
@@ -262,7 +262,7 @@ class MainActivity : Activity() {
                             // Public hotspot band/channel APIs are unavailable on our Android
                             // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
                             val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.2.1")
+                            val diagnostics = JSONObject().put("appVersion", "0.3.0")
                                 .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
                                 .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
                                 .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)

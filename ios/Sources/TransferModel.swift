@@ -42,6 +42,7 @@ struct Manifest: Decodable {
     let sha256: String
     let diagnostics: SenderDiagnostics?
     var mode: String? = nil
+    var supportsResume: Bool? = nil
 }
 
 enum TransferError: LocalizedError {
@@ -71,6 +72,8 @@ final class TransferModel: ObservableObject {
     @Published var diagnosticReport = ""
     @Published var manualJoinSuggested = false
     @Published var sending = false
+    @Published var savedDownloadBytes: Int64 = 0
+    private var discardAfterStop = false
     var androidReceives: Bool { manifest?.mode == "receive" }
     private var cancellation = TransferCancellation()
     private var activeOffer: String?
@@ -158,6 +161,9 @@ final class TransferModel: ObservableObject {
                               file.sha256.count == 64, file.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else { throw TransferError.message("Sender metadata is invalid.") }
                         guard !cancelled else { throw CancellationError() }
                         self.host = candidate; self.manifest = file
+                        savedDownloadBytes = file.supportsResume == true && file.mode != "receive" ?
+                            ((try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: file).offset) ?? 0) : 0
+                        progress = file.size == 0 ? 0 : Double(savedDownloadBytes) / Double(file.size)
                         manualJoinSuggested = false
                         updateReport()
                         status = file.mode == "receive" ? "Android receiver verified. Choose a file to send, then accept it on Android." : "Encrypted connection verified. Accept the file to start."
@@ -181,36 +187,59 @@ final class TransferModel: ObservableObject {
     func receive() async {
         guard let pairing, let manifest, !androidReceives, let host, let session, let agent, !busy else { return }
         busy = true; cancelled = false; cancellation = TransferCancellation(); progress = 0
-        received = nil; senderReadSummary = nil
+        received = nil; senderReadSummary = nil; discardAfterStop = false
         defer { busy = false }
         do {
-            try TransferStorage.requireSpace(manifest.size, at: FileManager.default.temporaryDirectory)
+            if manifest.supportsResume != true { try TransferStorage.requireSpace(manifest.size, at: FileManager.default.temporaryDirectory) }
             status = "Receiving…"
             let transferID = UUID().uuidString
             var request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
             request.setValue(transferID, forHTTPHeaderField: "X-Nearby-Transfer-ID")
-            let result = try await agent.download(session: session, request: request, manifest: manifest, cancellation: cancellation) { [weak self] count in
+            let onProgress: (Int64) -> Void = { [weak self] count in
                 Task { @MainActor in
                     guard let self, !self.cancelled, self.busy, self.received == nil else { return }
                     self.progress = manifest.size == 0 ? 1 : Double(count) / Double(manifest.size)
                     self.status = "Received \(ByteCountFormatter.string(fromByteCount: count, countStyle: .file))."
                 }
             }
-            guard !cancelled else { try? FileManager.default.removeItem(at: result.url); throw CancellationError() }
-            received = result.url; progress = 1
+            let result: ReceiveResult
+            if manifest.supportsResume == true {
+                result = try await ResumableDownload.receive(pin: pairing.certificateSHA256, manifest: manifest,
+                    request: request, session: session, agent: agent, cancellation: cancellation, progress: onProgress)
+            } else {
+                result = try await agent.download(session: session, request: request, manifest: manifest,
+                    cancellation: cancellation, progress: onProgress)
+            }
+            guard !cancelled || (manifest.supportsResume == true && !discardAfterStop) else {
+                try? FileManager.default.removeItem(at: result.url); throw CancellationError()
+            }
+            received = result.url; progress = 1; savedDownloadBytes = 0
             // Optional v0.2.0 instrumentation, outside the transfer timer. An old
             // sender, missing record, or timeout must never fail a verified file.
             let statsRequest = makeRequest(pairing: pairing, host: host, path: "transfer-stats?id=\(transferID)", timeout: 2)
-            if let (data, response) = try? await BoundedResponse.read(session: session, request: statsRequest, limit: 4096),
+            if manifest.supportsResume != true, let (data, response) = try? await BoundedResponse.read(session: session, request: statsRequest, limit: 4096),
                (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 4096,
                let measurement = try? JSONDecoder().decode(SenderReadMeasurement.self, from: data) {
                 senderReadSummary = measurement.summary(expectedBytes: manifest.size)
             }
-            guard !cancelled else { status = "Transfer verified and saved. Diagnostic check cancelled."; return }
+            guard !cancelled else {
+                updateReport(result: result)
+                status = "Transfer completed before the pause; verified and saved."
+                return
+            }
             updateReport(result: result)
-            status = String(format: "Verified complete. Transfer: %.2f s · %.1f MB/s. Checksum: %.2f s. Preparation and Wi-Fi setup excluded.", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds)
+            status = String(format: "Verified complete. This attempt: %.2f s · %.1f MB/s. Checksum: %.2f s. Preparation and Wi-Fi setup excluded.", result.seconds, Double(manifest.size - result.resumedBytes) / result.seconds / 1_000_000, result.verificationSeconds)
+            if result.resumedBytes > 0 { status += " Resumed from \(ByteCountFormatter.string(fromByteCount: result.resumedBytes, countStyle: .file))." }
         } catch {
-            status = cancelled ? "Cancelled. No incomplete file was saved." : error.localizedDescription
+            if manifest.supportsResume == true {
+                if let checkpoint = try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: manifest) {
+                    if discardAfterStop { checkpoint.discard() }
+                    savedDownloadBytes = checkpoint.offset
+                }
+                progress = manifest.size == 0 ? 0 : Double(savedDownloadBytes) / Double(manifest.size)
+                status = discardAfterStop ? "Cancelled. Saved download progress was discarded." :
+                    (cancelled ? "Paused." : error.localizedDescription) + " Saved \(ByteCountFormatter.string(fromByteCount: savedDownloadBytes, countStyle: .file)). Reconnect if needed, then tap Resume download."
+            } else { status = cancelled ? "Cancelled. No incomplete file was saved." : error.localizedDescription }
             updateReport(error: error)
         }
     }
@@ -276,7 +305,7 @@ final class TransferModel: ObservableObject {
             let seconds = max(ProcessInfo.processInfo.systemUptime - start, 0.001)
             progress = 1
             status = String(format: "Android verified and saved the file. %.2f s · %.1f MB/s. Tap Save received file on Android to choose a location.", seconds, Double(file.size) / seconds / 1_000_000)
-            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.2.1\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
+            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.3.0\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
         } catch {
             // Best effort revoke even after the original session was cancelled.
             // Android also discards incomplete uploads when its socket closes.
@@ -289,7 +318,30 @@ final class TransferModel: ObservableObject {
         }
     }
 
+    func pauseDownload() {
+        guard busy, !sending, manifest?.supportsResume == true else { return }
+        cancelled = true; cancellation.cancel()
+        if let session { agent?.cancelDownload(session: session, cancellation: cancellation) }
+        status = "Pausing; keeping completed pieces…"
+    }
+
+    func discardDownload() {
+        guard !busy, let pairing, let manifest else { return }
+        (try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: manifest))?.discard()
+        savedDownloadBytes = 0; progress = 0
+        status = "Saved progress discarded. You can start again."
+    }
+
+    func discardAllDownloads() {
+        guard !busy, let directory = try? DownloadCheckpoint.directory() else { return }
+        for url in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
+            if ["part", "json"].contains(url.pathExtension) { try? FileManager.default.removeItem(at: url) }
+        }
+        savedDownloadBytes = 0; progress = 0; status = "All incomplete download progress discarded. Completed files remain saved."
+    }
+
     func cancel() {
+        discardAfterStop = !sending && manifest?.supportsResume == true
         cancelled = true
         cancellation.cancel()
         // Revoke an offer on a separate short-lived pinned session because the
@@ -318,7 +370,7 @@ final class TransferModel: ObservableObject {
         if let pairing, JoinSettings.canRequestAutomaticJoin(profile: profileStatus) {
             NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: pairing.ssid)
         }
-        pairing = nil; manifest = nil; received = nil; host = nil; progress = 0
+        pairing = nil; manifest = nil; received = nil; host = nil; progress = 0; savedDownloadBytes = 0
         senderReadSummary = nil
         diagnosticReport = ""; manualJoinSuggested = false; joinResult = "not attempted"
         status = "Pairing cleared. To leave a network joined in Camera or Settings, use Settings → Wi-Fi. Previously received files remain in Files → On My iPhone → Nearby prototype."
@@ -333,15 +385,18 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.2.1", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.3.0", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {
             lines.append("File bytes: \(manifest.size)")
             lines.append(manifest.diagnostics?.summary ?? "Sender diagnostics: unavailable (update Android to 0.2.0)")
             if let result {
-                lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size) / result.seconds / 1_000_000, result.verificationSeconds))
-                lines.append(result.timing.summary)
+                lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size - result.resumedBytes) / result.seconds / 1_000_000, result.verificationSeconds))
+                lines.append("Bytes reused from checkpoint: \(result.resumedBytes)")
+                lines.append("Bytes transferred this attempt: \(manifest.size - result.resumedBytes)")
+                if manifest.supportsResume == true { lines.append("Chunked receive; timing includes checkpoint writes. Final checksum is separate.") }
+                else { lines.append(result.timing.summary) }
                 lines.append(senderReadSummary ?? "Sender snapshot read timing: unavailable")
             }
         }
@@ -351,7 +406,7 @@ final class TransferModel: ObservableObject {
     }
 }
 
-struct ReceiveResult { let url: URL; let seconds: Double; let verificationSeconds: Double; var timing = TransferTiming() }
+struct ReceiveResult { let url: URL; let seconds: Double; let verificationSeconds: Double; var timing = TransferTiming(); var resumedBytes: Int64 = 0 }
 
 // Serial delegate queue owns download state. Certificate pin is obtained from the
 // code physically scanned on the sender, never from the network being authenticated.
@@ -370,6 +425,8 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     private var onProgress: ((Int64) -> Void)?
     private var lastProgress: TimeInterval = 0
     private var timing = TransferTiming()
+    private var range: ResumeRange?
+    private var downloadTask: URLSessionDownloadTask?
     init(pin: String) { self.pin = pin }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
@@ -394,24 +451,28 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         self.urlSession(session, didReceive: challenge, completionHandler: completionHandler)
     }
 
-    func download(session: URLSession, request: URLRequest, manifest: Manifest, cancellation: TransferCancellation,
+    func download(session: URLSession, request: URLRequest, manifest: Manifest, cancellation: TransferCancellation, range: ResumeRange? = nil,
                   progress: @escaping (Int64) -> Void) async throws -> ReceiveResult {
         try await withCheckedThrowingContinuation { continuation in
             session.delegateQueue.addOperation {
                 do { try cancellation.check() }
                 catch { continuation.resume(throwing: error); return }
                 self.cancellation = cancellation
+                self.range = range
                 self.continuation = continuation; self.expected = manifest; self.result = nil
                 self.onProgress = progress; self.started = ProcessInfo.processInfo.systemUptime
                 self.lastProgress = 0
                 self.timing = TransferTiming()
-                session.downloadTask(with: request).resume()
+                let task = session.downloadTask(with: request)
+                self.downloadTask = task
+                task.resume()
             }
         }
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        do { try cancellation.check() } catch { downloadTask.cancel(); return }
         if let expected, totalBytesWritten > expected.size { downloadTask.cancel(); return }
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastProgress >= 0.25 {
@@ -423,12 +484,20 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let transferSeconds = max(ProcessInfo.processInfo.systemUptime - started, 0.001)
         do {
-            guard let expected, let response = downloadTask.response as? HTTPURLResponse, response.statusCode == 200 else {
+            try cancellation.check()
+            guard let expected, let response = downloadTask.response as? HTTPURLResponse,
+                  range.map({ $0.accepts(response) }) ?? (response.statusCode == 200) else {
                 throw TransferError.message("Sender refused the transfer. Scan a new code.")
             }
             let verificationStart = ProcessInfo.processInfo.systemUptime
             let size = (try FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber)?.int64Value
             guard size == expected.size else { throw TransferError.message("Incomplete file: size mismatch.") }
+            if range != nil {
+                let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("nearby-chunk-\(UUID().uuidString)")
+                try FileManager.default.moveItem(at: location, to: temporary)
+                result = .success(ReceiveResult(url: temporary, seconds: transferSeconds, verificationSeconds: 0))
+                return
+            }
             let handle = try FileHandle(forReadingFrom: location)
             defer { try? handle.close() }
             var hash = SHA256()
@@ -459,6 +528,7 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
             return
         }
         guard task is URLSessionDownloadTask, let continuation else { return }
+        downloadTask = nil
         self.continuation = nil; onProgress = nil; expected = nil
         if let error {
             if case .success(let saved) = result { try? FileManager.default.removeItem(at: saved.url) }
@@ -469,6 +539,12 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
             } } ?? .failure(TransferError.message("No completed file received.")))
         }
         result = nil
+    }
+
+    func cancelDownload(session: URLSession, cancellation: TransferCancellation) {
+        session.delegateQueue.addOperation {
+            if self.cancellation === cancellation { self.downloadTask?.cancel() }
+        }
     }
 
     func upload(session: URLSession, request: URLRequest, file: OutgoingFile,

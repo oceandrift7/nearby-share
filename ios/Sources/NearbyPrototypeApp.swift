@@ -75,8 +75,12 @@ struct TransferView: View {
                             Label("Incoming file", systemImage: "doc.fill").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             Text(file.name).font(.title3.bold()).textSelection(.enabled)
                             Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)).foregroundStyle(.secondary)
+                        if model.savedDownloadBytes > 0 {
+                            Text("Saved progress: \(ByteCountFormatter.string(fromByteCount: model.savedDownloadBytes, countStyle: .file))").font(.subheadline)
+                            Button("Discard saved progress") { model.discardDownload() }.disabled(model.busy)
+                        }
                         if model.received == nil {
-                            Button("Accept and receive file") { Task { await model.receive() } }
+                            Button(model.savedDownloadBytes > 0 ? "Resume download" : "Accept and receive file") { Task { await model.receive() } }
                                 .buttonStyle(.borderedProminent).disabled(model.busy)
                         }
                         }.nearbyCard()
@@ -89,7 +93,10 @@ struct TransferView: View {
                         Text(model.progress, format: .percent.precision(.fractionLength(0)))
                             .font(.system(.largeTitle, design: .rounded).weight(.bold)).monospacedDigit()
                         ProgressView(value: model.progress).tint(.blue)
-                        Button("Cancel") { model.cancel() }
+                        if !model.sending && model.manifest?.supportsResume == true {
+                            Button("Pause download") { model.pauseDownload() }
+                        }
+                        Button(!model.sending && model.manifest?.supportsResume == true ? "Cancel and discard" : "Cancel") { model.cancel() }
                     }
                     Text(model.status).font(.subheadline).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).nearbyCard()
                     if let url = model.received {
@@ -106,7 +113,8 @@ struct TransferView: View {
                     if model.pairing != nil {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
-                    Text("Nearby 0.2.1 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
+                    Button("Discard all incomplete downloads") { model.discardAllDownloads() }.disabled(model.busy).font(.footnote)
+                    Text("Nearby 0.3.0 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
             }.background(Color(uiColor: .systemGroupedBackground))
                 .toolbar(.hidden, for: .navigationBar)
