@@ -10,6 +10,8 @@ class SharedFileServer(port: Int, private val token: String, private val file: F
                        private val manifest: JSONObject, private val inbox: ReceiveInbox? = null,
                        private val onFileRequested: () -> Unit) : NanoHTTPD(port) {
     private val readReports = SenderReadReports()
+    internal val connections = LimitedConnections()
+    init { setAsyncRunner(connections) }
     override fun serve(session: IHTTPSession): Response {
         if (session.headers["authorization"] != "Bearer $token")
             return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "Pairing required").also { it.addHeader("Connection", "close") }

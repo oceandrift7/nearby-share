@@ -16,10 +16,10 @@ import javax.net.ssl.X509TrustManager
 
 @RunWith(AndroidJUnit4::class)
 class ReceiveInboxTest {
-    class Fixture(val space: () -> Long = { Long.MAX_VALUE }, tls: Boolean = false) : AutoCloseable {
+    class Fixture(val space: () -> Long = { Long.MAX_VALUE }, tls: Boolean = false, sessionToken: String = "secret") : AutoCloseable {
         val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "inbox-test-${java.util.UUID.randomUUID()}")
         val inbox = ReceiveInbox(directory, space)
-        val server = SharedFileServer(0, "secret", null, JSONObject().put("mode", "receive"), inbox) {}
+        val server = SharedFileServer(0, sessionToken, null, JSONObject().put("mode", "receive"), inbox) {}
         private var ssl: SSLContext? = null
         fun socket(): Socket = ssl?.socketFactory?.createSocket("127.0.0.1", server.listeningPort) ?: Socket("127.0.0.1", server.listeningPort)
         init {
@@ -37,11 +37,11 @@ class ReceiveInboxTest {
             }
             server.start(3000, true)
         }
-        fun request(method: String, path: String, body: ByteArray = byteArrayOf(), token: String = "secret", length: Int = body.size, sendBody: Boolean = true): Pair<Int, String> {
+        fun request(method: String, path: String, body: ByteArray = byteArrayOf(), token: String = "secret", length: Int = body.size, sendBody: Boolean = true, extraHeaders: String = ""): Pair<Int, String> {
             val socket = socket()
             return socket.use {
                 it.soTimeout = 5000
-                it.outputStream.write(("$method $path HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer $token\r\nContent-Length: $length\r\nConnection: close\r\n\r\n").toByteArray())
+                it.outputStream.write(("$method $path HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer $token\r\nContent-Length: $length\r\n${extraHeaders}Connection: close\r\n\r\n").toByteArray())
                 if (sendBody) it.outputStream.write(body)
                 it.outputStream.flush()
                 if (sendBody && length > body.size) it.shutdownOutput()

@@ -89,9 +89,13 @@ class ReceiveInbox(private val directory: File, private val availableSpace: () -
             offset += count
         }
         val body = JSONObject(String(bytes, Charsets.UTF_8))
-        val name = body.getString("name")
-        val size = body.getLong("size")
-        val hash = body.getString("sha256")
+        // JSONObject getters coerce numeric strings and fractional sizes. Reject
+        // wrong types instead of presenting different metadata to the receiver.
+        val name = body.get("name") as? String ?: return reply(400, "Name must be text")
+        val rawSize = body.get("size")
+        if (rawSize !is Int && rawSize !is Long) return reply(400, "Size must be an integer")
+        val size = (rawSize as Number).toLong()
+        val hash = body.get("sha256") as? String ?: return reply(400, "Hash must be text")
         if (name.toByteArray(Charsets.UTF_8).size !in 1..1024 || name.any { it.isISOControl() } ||
             size !in 0..1_099_511_627_776L || !hash.matches(Regex("[0-9a-f]{64}"))) return reply(400, "Invalid metadata")
         val item = synchronized(lock) {
