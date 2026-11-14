@@ -9,3 +9,5 @@ local.properties
 *.xcodeproj/
 *.xcresult/
 work/
+ios/build-fixture/
+ios/Tests/Fixtures/

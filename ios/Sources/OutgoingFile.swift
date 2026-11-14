@@ -79,7 +79,7 @@ struct UploadReceipt: Decodable {
 
 enum BoundedResponse {
     static func read(session: URLSession, request: URLRequest, limit: Int) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request, delegate: session.delegate as? URLSessionTaskDelegate)
         guard response.expectedContentLength <= Int64(limit) else {
             bytes.task.cancel(); throw TransferError.message("Device response exceeds the supported size.")
         }

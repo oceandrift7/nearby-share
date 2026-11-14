@@ -389,6 +389,11 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         completionHandler(nil) // Never forward the bearer token to another endpoint.
     }
 
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        self.urlSession(session, didReceive: challenge, completionHandler: completionHandler)
+    }
+
     func download(session: URLSession, request: URLRequest, manifest: Manifest, cancellation: TransferCancellation,
                   progress: @escaping (Int64) -> Void) async throws -> ReceiveResult {
         try await withCheckedThrowingContinuation { continuation in

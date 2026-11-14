@@ -60,6 +60,10 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
     func stop() { completed = true; queue.async { self.capture.stopRunning() } }
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
         guard !completed, let value = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
+        if value.hasPrefix("WIFI:") {
+            message.text = "This is the Wi-Fi code. Scan it using iPhone Camera to join the hotspot. Then show Android’s step 2 Nearby pairing code and scan that here."
+            return
+        }
         stop(); scanned(value)
     }
 }
