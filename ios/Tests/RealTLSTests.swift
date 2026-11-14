@@ -29,7 +29,8 @@ final class RealTLSTests: XCTestCase {
         XCTAssertEqual(saved.resumedBytes, 0)
         let report: [String: Any] = ["platform":"iOS simulator", "path":"resumable production receiver; Python TLS fixture", "bytes":size,
             "seconds":saved.seconds, "checksumSeconds":saved.verificationSeconds, "MBps":Double(size)/saved.seconds/1e6,
-            "verified":true, "physicalWiFi":false, "resumable":true]
+            "verified":true, "physicalWiFi":false, "resumable":true, "rangeRequests":saved.rangeRequests,
+            "reusedConnections":saved.reusedRangeConnections]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         print("NEARBY_BENCHMARK " + String(decoding:data,as:UTF8.self))
         let attachment = XCTAttachment(data:data,uniformTypeIdentifier:"public.json")

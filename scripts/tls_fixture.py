@@ -31,6 +31,7 @@ else:
     for _ in range(benchmark_size//262144): benchmark_hasher.update(b'Z'*262144)
     benchmark_hash = benchmark_hasher.hexdigest()
     class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
         def do_GET(self):
             parsed = urllib.parse.urlsplit(self.path)
             if parsed.path == '/benchmark-range':

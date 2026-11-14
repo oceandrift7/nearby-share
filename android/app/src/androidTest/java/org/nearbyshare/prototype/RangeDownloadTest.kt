@@ -26,6 +26,8 @@ class RangeDownloadTest {
             val end = minOf(offset + 1024 * 1024, bytes.size) - 1
             val response = f.request("GET", "/file", extraHeaders = "Range: bytes=$offset-$end\r\nIf-Match: \"$hash\"\r\n")
             assertEquals(206, response.first)
+            assertTrue(f.lastResponseHeaders.contains("Content-Range: bytes $offset-$end/${bytes.size}", ignoreCase = true))
+            assertTrue(f.lastResponseHeaders.contains("ETag: \"$hash\"", ignoreCase = true))
             collected.write(response.second.toByteArray(Charsets.UTF_8))
             offset = end + 1
         }

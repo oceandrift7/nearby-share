@@ -115,6 +115,8 @@ enum ResumableDownload {
         let resumed = checkpoint.offset
         try TransferStorage.requireSpace(manifest.size - resumed + DownloadCheckpoint.chunkSize, at: checkpoint.part.deletingLastPathComponent())
         let started = ProcessInfo.processInfo.systemUptime
+        var requests = 0
+        var reusedConnections = 0
         progress(resumed)
         while checkpoint.offset < manifest.size {
             try cancellation.check()
@@ -128,6 +130,8 @@ enum ResumableDownload {
                     progress(range.start + count)
                 }
             defer { try? FileManager.default.removeItem(at: chunk.url) }
+            requests += 1
+            if chunk.timing.reused { reusedConnections += 1 }
             try cancellation.check()
             try checkpoint.append(chunk.url, cancellation: cancellation)
             checkpointed?(checkpoint.offset)
@@ -135,6 +139,7 @@ enum ResumableDownload {
         }
         let seconds = max(ProcessInfo.processInfo.systemUptime - started, 0.001)
         let (url, verification) = try checkpoint.finish(cancellation: cancellation)
-        return ReceiveResult(url: url, seconds: seconds, verificationSeconds: verification, resumedBytes: resumed)
+        return ReceiveResult(url: url, seconds: seconds, verificationSeconds: verification, resumedBytes: resumed,
+                             rangeRequests: requests, reusedRangeConnections: reusedConnections)
     }
 }

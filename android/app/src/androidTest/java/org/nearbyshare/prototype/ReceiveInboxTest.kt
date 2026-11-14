@@ -22,6 +22,8 @@ class ReceiveInboxTest {
         val inbox = ReceiveInbox(directory, space)
         val server = SharedFileServer(0, sessionToken, outgoing, outgoingManifest, inbox) {}
         private var ssl: SSLContext? = null
+        var lastResponseHeaders: String = ""
+            private set
         fun socket(): Socket = ssl?.socketFactory?.createSocket("127.0.0.1", server.listeningPort) ?: Socket("127.0.0.1", server.listeningPort)
         init {
             if (tls) {
@@ -47,6 +49,7 @@ class ReceiveInboxTest {
                 it.outputStream.flush()
                 if (sendBody && length > body.size) it.shutdownOutput()
                 val response = it.inputStream.readBytes().toString(Charsets.UTF_8)
+                lastResponseHeaders = response.substringBefore("\r\n\r\n")
                 response.substringBefore("\r\n").split(" ")[1].toInt() to response.substringAfter("\r\n\r\n")
             }
         }

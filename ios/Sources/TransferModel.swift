@@ -195,9 +195,10 @@ final class TransferModel: ObservableObject {
             let transferID = UUID().uuidString
             var request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
             request.setValue(transferID, forHTTPHeaderField: "X-Nearby-Transfer-ID")
+            let receiveCancellation = cancellation
             let onProgress: (Int64) -> Void = { [weak self] count in
                 Task { @MainActor in
-                    guard let self, !self.cancelled, self.busy, self.received == nil else { return }
+                    guard let self, self.cancellation === receiveCancellation, !self.cancelled, self.busy, self.received == nil else { return }
                     self.progress = manifest.size == 0 ? 1 : Double(count) / Double(manifest.size)
                     self.status = "Received \(ByteCountFormatter.string(fromByteCount: count, countStyle: .file))."
                 }
@@ -395,7 +396,10 @@ final class TransferModel: ObservableObject {
                 lines.append(String(format: "Verified: yes\nTransfer: %.3f s\nThroughput: %.3f MB/s\nChecksum: %.3f s", result.seconds, Double(manifest.size - result.resumedBytes) / result.seconds / 1_000_000, result.verificationSeconds))
                 lines.append("Bytes reused from checkpoint: \(result.resumedBytes)")
                 lines.append("Bytes transferred this attempt: \(manifest.size - result.resumedBytes)")
-                if manifest.supportsResume == true { lines.append("Chunked receive; timing includes checkpoint writes. Final checksum is separate.") }
+                if manifest.supportsResume == true {
+                    lines.append("Range requests: \(result.rangeRequests); reused connections: \(result.reusedRangeConnections)")
+                    lines.append("Chunked receive; timing includes checkpoint writes. Final checksum is separate.")
+                }
                 else { lines.append(result.timing.summary) }
                 lines.append(senderReadSummary ?? "Sender snapshot read timing: unavailable")
             }
@@ -406,7 +410,7 @@ final class TransferModel: ObservableObject {
     }
 }
 
-struct ReceiveResult { let url: URL; let seconds: Double; let verificationSeconds: Double; var timing = TransferTiming(); var resumedBytes: Int64 = 0 }
+struct ReceiveResult { let url: URL; let seconds: Double; let verificationSeconds: Double; var timing = TransferTiming(); var resumedBytes: Int64 = 0; var rangeRequests: Int = 0; var reusedRangeConnections: Int = 0 }
 
 // Serial delegate queue owns download state. Certificate pin is obtained from the
 // code physically scanned on the sender, never from the network being authenticated.
