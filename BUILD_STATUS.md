@@ -4,7 +4,14 @@
 
 Adds native iPhone file selection/snapshot preparation and disk-backed HTTPS upload; Android receive mode, per-file acceptance/rejection, streaming size/hash verification, final acknowledgement, and persistent verified-file export. Existing Android-to-iPhone flow remains available. Also adds free-space checks, cancellation during snapshot/hash loops, bounded iOS metadata reads, a shorter repeated-address probe budget, and Android rotation handling. Background survival and stable release signing remain outstanding.
 
-Build/test validation is in progress. Automated checks are not a physical device test and establish no new throughput result. The last physical hotspot measurement remains 6.380 MB/s in the Android-to-iPhone direction. Keep both apps in the foreground; restart interrupted transfers from the beginning. Export Android received files before uninstalling any prototype.
+Hosted Android build/lint and iOS device build/packaging passed. All **18 Android tests passed on each of API29 and API31**, and all **24 iOS simulator tests passed with zero failures**. [Final build and test evidence](https://github.com/oceandrift7/nearby-share/actions/runs/43532097959), source commit `89fcb68e2ebe19381617e07fa930cc416ea309a6`. Tests cover actual pinned TLS upload, approval/rejection, stale-offer approval isolation, wrong hashes, truncated streams, cancellation cleanup, storage preflight, empty files, bounded iOS responses through the production session delegate, upload receipt/error handling, cancelled task creation, and outgoing snapshot integrity. Existing TLS/download/pairing tests remain passing.
+
+Downloaded package artifact digests and ZIP integrity passed. APK signature verifies; IPA version is 0.2.0/build7 with requested entitlement metadata. This still needs SideStore signing; it does not grant automatic hotspot joining to a free profile. Native initial screens were inspected; actual-phone transfer/approval screens remain to be tested.
+
+- Android APK SHA-256: `24cb1de1d1158d8c8d529d035d26da11ec90a9e88057d7ab1e2aea5daaa41a95`.
+- iPhone IPA SHA-256: `ecd8b05ad2f566104e2fe1ec371228a0d22e9a50b3849f370e6e75b51870e7ac`.
+
+ Automated checks are not a physical device test and establish no new throughput result. The last physical hotspot measurement remains 6.380 MB/s in the Android-to-iPhone direction. Keep both apps in the foreground; restart interrupted transfers from the beginning. Export Android received files before uninstalling any prototype.
 
 
 ## Version 0.1.5 — native visual update
