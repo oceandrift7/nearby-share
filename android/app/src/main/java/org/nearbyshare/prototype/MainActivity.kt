@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var rejectButton: Button
     private lateinit var saveButton: Button
     private var exportFile: File? = null
+    private var displayedOfferID: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,8 +96,8 @@ class MainActivity : Activity() {
             }
         }
         layout.addView(receiveButton)
-        acceptButton = Button(this).apply { text = "Accept incoming file"; visibility = android.view.View.GONE; setOnClickListener { inbox?.decide(true) } }
-        rejectButton = Button(this).apply { text = "Reject incoming file"; visibility = android.view.View.GONE; setOnClickListener { inbox?.decide(false) } }
+        acceptButton = Button(this).apply { text = "Accept incoming file"; visibility = android.view.View.GONE; setOnClickListener { displayedOfferID?.let { inbox?.decide(it, true) } } }
+        rejectButton = Button(this).apply { text = "Reject incoming file"; visibility = android.view.View.GONE; setOnClickListener { displayedOfferID?.let { inbox?.decide(it, false) } } }
         saveButton = Button(this).apply {
             text = "Save received file…"; visibility = android.view.View.GONE
             setOnClickListener {
@@ -338,6 +339,7 @@ class MainActivity : Activity() {
 
     private fun stopSharing() {
         generation++; pending = null
+        displayedOfferID = null
         inbox?.close(); inbox = null
         server?.stop(); server = null
         val old = reservation; reservation = null; old?.close()
@@ -356,6 +358,7 @@ class MainActivity : Activity() {
 
     private fun renderIncoming() {
         val item = inbox?.snapshot() ?: return
+        displayedOfferID = item.id
         acceptButton.visibility = if (item.state == "waiting") android.view.View.VISIBLE else android.view.View.GONE
         rejectButton.visibility = acceptButton.visibility
         saveButton.visibility = if (item.state == "complete") android.view.View.VISIBLE else android.view.View.GONE

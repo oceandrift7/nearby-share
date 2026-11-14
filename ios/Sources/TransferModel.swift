@@ -264,7 +264,7 @@ final class TransferModel: ObservableObject {
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             request.setValue(String(file.size), forHTTPHeaderField: "Content-Length")
             let start = ProcessInfo.processInfo.systemUptime
-            let result = try await agent.upload(session: session, request: request, file: file) { [weak self] bytes in
+            let result = try await agent.upload(session: session, request: request, file: file, cancellation: cancellation) { [weak self] bytes in
                 Task { @MainActor in
                     guard let self, self.sending, !self.cancelled else { return }
                     self.progress = file.size == 0 ? 1 : min(1, Double(bytes) / Double(file.size))
@@ -302,7 +302,11 @@ final class TransferModel: ObservableObject {
             let revoke = URLSession(configuration: config, delegate: PinnedReceiver(pin: pairing.certificateSHA256), delegateQueue: nil)
             Task { _ = try? await BoundedResponse.read(session: revoke, request: request, limit: 4096); revoke.invalidateAndCancel() }
         }
-        session?.invalidateAndCancel()
+        if let session {
+            // Serialize invalidation with queued upload/download creation. The
+            // cancellation flag interrupts hashing immediately on its own.
+            session.delegateQueue.addOperation { session.invalidateAndCancel() }
+        }
         session = nil; agent = nil; manifest = nil; host = nil
         // iOS controls the Wi-Fi approval dialog; cancellation is checked when it returns.
         status = "Cancelling… If the Wi-Fi prompt is open, dismiss it."
@@ -389,6 +393,8 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
                   progress: @escaping (Int64) -> Void) async throws -> ReceiveResult {
         try await withCheckedThrowingContinuation { continuation in
             session.delegateQueue.addOperation {
+                do { try cancellation.check() }
+                catch { continuation.resume(throwing: error); return }
                 self.cancellation = cancellation
                 self.continuation = continuation; self.expected = manifest; self.result = nil
                 self.onProgress = progress; self.started = ProcessInfo.processInfo.systemUptime
@@ -461,9 +467,12 @@ final class PinnedReceiver: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     }
 
     func upload(session: URLSession, request: URLRequest, file: OutgoingFile,
+                cancellation: TransferCancellation = TransferCancellation(),
                 progress: @escaping (Int64) -> Void) async throws -> UploadReceipt {
         try await withCheckedThrowingContinuation { continuation in
             session.delegateQueue.addOperation {
+                do { try cancellation.check() }
+                catch { continuation.resume(throwing: error); return }
                 self.uploadContinuation = continuation; self.uploadData = Data(); self.uploadFailure = nil
                 self.uploadProgress = progress; self.uploadLastProgress = 0
                 session.uploadTask(with: request, fromFile: file.url).resume()

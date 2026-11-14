@@ -23,10 +23,10 @@ class ReceiveInbox(private val directory: File, private val availableSpace: () -
     init { directory.mkdirs() }
     fun snapshot(): Offer? = synchronized(lock) { current?.copy() }
 
-    fun decide(accept: Boolean) {
+    fun decide(id: String, accept: Boolean) {
         synchronized(lock) {
             val item = current ?: return
-            if (closed || item.state != "waiting") return
+            if (closed || item.id != id || item.state != "waiting") return
             if (accept && availableSpace() < item.size + RESERVE) {
                 item.state = "failed"; item.error = "Not enough free storage on Android."
             } else item.state = if (accept) "accepted" else "rejected"
@@ -97,7 +97,9 @@ class ReceiveInbox(private val directory: File, private val availableSpace: () -
         val item = synchronized(lock) {
             if (closed || activeInput != null || current?.state?.let { it !in TERMINAL } == true) return reply(409, "An offer is already active")
             if (availableSpace() < size + RESERVE) return reply(507, "Not enough free storage on Android")
-            Offer(UUID.randomUUID().toString(), name, size, hash).also { current = it }
+            // The POST receipt must remain a stable waiting snapshot even if the
+            // UI accepts immediately after the notification below.
+            Offer(UUID.randomUUID().toString(), name, size, hash).also { current = it }.copy()
         }
         changed()
         return json(item.json())

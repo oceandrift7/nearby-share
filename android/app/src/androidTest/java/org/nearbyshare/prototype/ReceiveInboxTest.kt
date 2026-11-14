@@ -53,6 +53,7 @@ class ReceiveInboxTest {
             assertEquals(response.second, 200, response.first)
             return JSONObject(response.second).getString("id")
         }
+        fun decide(accept: Boolean) { inbox.decide(inbox.snapshot()!!.id, accept) }
         override fun close() { inbox.close(); server.stop(); directory.deleteRecursively() }
     }
     @Test fun pinnedTlsUploadRequiresAcceptanceAndReturnsVerifiedReceipt() {
@@ -63,7 +64,7 @@ class ReceiveInboxTest {
             // headers here; writing 900 KiB after refusal can correctly reset TLS.
             assertEquals(409, f.request("PUT", "/upload?id=$id", bytes, sendBody = false).first)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
-            f.inbox.decide(true)
+            f.decide(true)
             val response = f.request("PUT", "/upload?id=$id", bytes)
             assertEquals(response.second, 200, response.first)
             val receipt = JSONObject(response.second)
@@ -89,9 +90,9 @@ class ReceiveInboxTest {
     @Test fun rejectionAndRevocationPreventUploadsAndAllowANewOffer() {
         Fixture().use { f ->
             val bytes = byteArrayOf(1, 2, 3)
-            val rejected = f.offer(bytes); f.inbox.decide(false)
+            val rejected = f.offer(bytes); f.decide(false)
             assertEquals(409, f.request("PUT", "/upload?id=$rejected", bytes).first)
-            val cancelled = f.offer(bytes); f.inbox.decide(true)
+            val cancelled = f.offer(bytes); f.decide(true)
             assertEquals(200, f.request("DELETE", "/offer?id=$cancelled").first)
             assertEquals(409, f.request("PUT", "/upload?id=$cancelled", bytes).first)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
@@ -100,11 +101,11 @@ class ReceiveInboxTest {
     @Test fun wrongHashAndTruncatedBodyLeaveNoPartialOrSavedFiles() {
         Fixture().use { f ->
             val bytes = ByteArray(4096) { 1 }
-            val wrongHash = f.offer(bytes, "0".repeat(64)); f.inbox.decide(true)
+            val wrongHash = f.offer(bytes, "0".repeat(64)); f.decide(true)
             assertEquals(400, f.request("PUT", "/upload?id=$wrongHash", bytes).first)
             assertEquals("failed", f.inbox.snapshot()!!.state)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
-            val short = f.offer(bytes); f.inbox.decide(true)
+            val short = f.offer(bytes); f.decide(true)
             assertEquals(400, f.request("PUT", "/upload?id=$short", bytes.copyOf(100), length = bytes.size).first)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
         }
@@ -113,7 +114,7 @@ class ReceiveInboxTest {
         var free = Long.MAX_VALUE
         Fixture(space = { free }).use { f ->
             val bytes = ByteArray(10)
-            val id = f.offer(bytes); f.inbox.decide(true); free = 0
+            val id = f.offer(bytes); f.decide(true); free = 0
             assertEquals(507, f.request("PUT", "/upload?id=$id", bytes).first)
             assertTrue(f.directory.listFiles().isNullOrEmpty())
             assertEquals(507, f.request("POST", "/offer", JSONObject().put("name", "x").put("size", 10).put("sha256", digest(bytes)).toString().toByteArray()).first)
@@ -124,7 +125,7 @@ class ReceiveInboxTest {
             val id = f.offer(byteArrayOf())
             assertEquals(409, f.request("POST", "/offer", JSONObject().put("name", "x").put("size", 0).put("sha256", digest(byteArrayOf())).toString().toByteArray()).first)
             assertEquals(404, f.request("GET", "/offer?id=wrong").first)
-            f.inbox.decide(true)
+            f.decide(true)
             assertEquals(200, f.request("PUT", "/upload?id=$id").first)
             assertEquals(0L, f.inbox.snapshot()!!.saved!!.length())
         }
@@ -132,7 +133,7 @@ class ReceiveInboxTest {
     @Test fun stoppingAnActiveUploadDiscardsItsPartialFile() {
         Fixture().use { f ->
             val bytes = ByteArray(2_000_000) { 7 }
-            val id = f.offer(bytes); f.inbox.decide(true)
+            val id = f.offer(bytes); f.decide(true)
             Socket("127.0.0.1", f.server.listeningPort).use { socket ->
                 socket.outputStream.write(("PUT /upload?id=$id HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray())
                 socket.outputStream.write(bytes, 0, 300_000); socket.outputStream.flush()
@@ -145,6 +146,17 @@ class ReceiveInboxTest {
                 assertTrue(f.directory.listFiles().isNullOrEmpty())
                 assertEquals("cancelled", f.inbox.snapshot()!!.state)
             }
+        }
+    }
+    @Test fun staleAcceptanceCannotApproveADifferentOffer() {
+        Fixture().use { f ->
+            val first = f.offer(byteArrayOf(1)); f.decide(false)
+            val second = f.offer(byteArrayOf(2))
+            f.inbox.decide(first, true)
+            assertEquals("waiting", f.inbox.snapshot()!!.state)
+            assertEquals(409, f.request("PUT", "/upload?id=$second", byteArrayOf(2)).first)
+            f.inbox.decide(second, true)
+            assertEquals(200, f.request("PUT", "/upload?id=$second", byteArrayOf(2)).first)
         }
     }
     companion object {

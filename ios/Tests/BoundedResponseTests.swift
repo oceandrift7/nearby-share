@@ -32,7 +32,10 @@ final class BoundedResponseTests: XCTestCase {
     private func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ResponseStub.self]
-        return URLSession(configuration: configuration)
+        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
+        // Exercise the same delegate used by production metadata requests, not
+        // only Foundation's default session.
+        return URLSession(configuration: configuration, delegate: PinnedReceiver(pin: String(repeating: "0", count: 64)), delegateQueue: queue)
     }
     func testSmallResponseWithUnknownLengthIsPreserved() async throws {
         let session = session(); defer { session.invalidateAndCancel() }
@@ -72,5 +75,18 @@ final class BoundedResponseTests: XCTestCase {
                 XCTAssertNotEqual(path, "valid", "\(error)")
             }
         }
+    }
+    func testCancelledUploadNeverCreatesTaskInInvalidatedSession() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [UploadStub.self]
+        let agent = PinnedReceiver(pin: String(repeating: "0", count: 64))
+        let session = URLSession(configuration: config, delegate: agent, delegateQueue: nil)
+        session.invalidateAndCancel()
+        let cancellation = TransferCancellation(); cancellation.cancel()
+        let file = OutgoingFile(url: URL(fileURLWithPath: "/does-not-exist"), name: "x", size: 0, sha256: "x")
+        do {
+            _ = try await agent.upload(session: session, request: URLRequest(url: URL(string: "https://fixture.invalid/valid")!), file: file, cancellation: cancellation) { _ in }
+            XCTFail("Cancelled operation created an upload")
+        } catch { XCTAssertTrue(error is CancellationError) }
     }
 }
