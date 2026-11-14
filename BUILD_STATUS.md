@@ -1,5 +1,15 @@
 # Build status — 14 November 2026
 
+## Android 0.2.1 — metadata and connection limits
+
+Final hosted run [43637607105](https://github.com/oceandrift7/nearby-share/actions/runs/43637607105), code commit `28ece849e47e3bd00c7005adb3b31e419d99d302`: Android compilation/lint passed; all **23 tests passed on each API29/API31**; all **27 iOS simulator tests passed**. New Android checks include 87 malformed/coercible metadata cases and recovery after eight idle clients fill the connection cap. Existing 64 MiB verified TLS uploads passed (hosted loopback 185.9/234.1 MB/s; these are not physical Wi-Fi rates or proof of a speed improvement).
+
+APK artifact digest/ZIP and v2 signature checks passed. Package version is 0.2.1/code8. APK SHA-256: `e007c0f78ff3eb918c7d7bc568258b328f7b3998ebcb3e449ee075dd9f9fcde5`. Keep the existing iPhone 0.2.1 installation. Physical cross-platform transfer with the new Android cap still needs testing.
+
+The first iOS attempt had one five-second timeout on its initial loopback HTTPS request (26 other tests passed). The iOS job alone was rerun without code changes or disabled checks; all 27 tests then passed. The intermittent first-request failure remains a test-reliability concern; its exact cause is not established. The retry measured 18.6 MB/s for the verified 64 MiB simulator download with another 0.425 s for checksum; hosted timing varies substantially.
+
+See [hardening details and limitations](docs/ANDROID-HARDENING.md). No complete penetration-test or flood-availability guarantee is claimed.
+
 ## iPhone 0.2.1 — streamed metadata certificate handling
 
 Passes the certificate-pinning delegate explicitly to async streaming metadata requests and handles task-level authentication challenges with the same exact certificate pin. Adds a real loopback self-signed HTTPS test on the iOS simulator, including wrong-pin rejection. The scanner keeps Wi-Fi codes in view with explicit Camera/step-2 instructions. Compatible with Android 0.2.0; no Android reinstall required. Validation: all 25 iOS simulator tests passed, including real self-signed HTTPS success and wrong-pin rejection through the production bounded streaming reader. Android compilation/lint and 18 tests on each API29/API31 passed in final run [43607659093](https://github.com/oceandrift7/nearby-share/actions/runs/43607659093), commit `97748bf2c8ffe109cd0fbf37e76e0d55ab8bf2bc`. IPA artifact digest/ZIP and version/entitlement inspection passed (0.2.1/build8). IPA SHA-256: `023e7ddcc6b91355614431cca3c1b9e8a3f64113d9f4e23a8c1ca8b787202c5e`. The earlier attempt encountered an intermittent reset in an unchanged Android rejection test; the final run passed. A new physical-phone transfer remains required; this test does not establish the cause of every reported route error. Offline-route and timeout errors remain separate from certificate authentication.

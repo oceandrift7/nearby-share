@@ -2,6 +2,8 @@
 
 Early source prototype for a free, open-source nearby file-sharing app. The name is temporary. No ads, analytics, accounts, or file-upload servers.
 
+Latest builds: Android 0.2.1 and iPhone 0.2.1. Android hardening rejects coerced offer metadata and caps active connections at eight; see [validation and limitations](docs/ANDROID-HARDENING.md).
+
 **Version 0.2.0:** one-file transfers in **both directions between Android and iPhone**, over Android's local-only Wi-Fi hotspot and pinned HTTPS. Android can either offer a selected file, or open a receive session. In receive mode, the iPhone chooses a file and Android explicitly accepts/rejects the offer. The receiver verifies the byte count and SHA-256 before reporting a saved file. No internet or paid Apple account is required for the Camera/Settings connection flow.
 
 **Not implemented:** iPhone-to-iPhone, Windows client, resume, trusted-device memory, background transfers, multiple files, or automatic discovery. This is not a SHAREit replacement yet. No speed improvement is claimed. The ~6.4 MB/s physical result below is an earlier Android-to-iPhone test; the reverse direction needs testing on phones. See BUILD_STATUS.md for build/test evidence.
