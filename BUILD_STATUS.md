@@ -1,4 +1,19 @@
-# Build status — 14 November 2026
+# Build status — 15 November 2026
+
+## Version 0.4.0 — remembered transfers and background progress
+
+[successful run 43672142150](https://github.com/oceandrift7/nearby-share/actions/runs/43672142150), source `e6e724fd94956d83270f1d1c50e5c2c00f7441e2`: Android build/lint and **33 tests on each API29/API31** passed; iPhone device build and **54 iOS26.2 simulator tests** passed. Includes the verified 0.3.1 remembered-file/Keychain shortcuts, Android foreground-service ownership with a progress/Stop notification, and iOS26 continued-processing requests with system Live Activity progress. Downloads retain committed pieces on system expiration; uploads remain nonresumable. Background availability and Lock Screen/Dynamic Island behavior on a free SideStore installation are not physically validated. See [background implementation, checks and limits](docs/BACKGROUND-TRANSFERS.md).
+
+Artifact ZIP digests and package integrity/metadata passed. APK v3 signature/alignment verify and nonsignature payload entries match CI. The persistent local test signer is documented in [remembered transfers](docs/REMEMBERED-TRANSFERS.md); switching from earlier debug signers can require one uninstall after exporting received files and finishing paused transfers. Keep iPhone app data by updating through the same SideStore installation without uninstalling.
+
+- APK SHA-256: `e4c1539c19c0d08050fc6732c31789a3c19db044bd39b05080b23848e5a5b86a`.
+- IPA SHA-256: `19f30e4bc89402713b58e13e24574ef1ca20f88914143bf79267eafecc90d47c`.
+
+No new physical speed result. Full native Nearby/Files/Activity tabs and demo layouts remain required before public release. iPhone-to-iPhone, Windows and reverse resume remain unimplemented.
+
+## Version 0.3.1 — remembered files and clean Home pause
+
+[Run43669725780](https://github.com/oceandrift7/nearby-share/actions/runs/43669725780) passed **31 tests on each Android API29/API31** and **51 iOS simulator tests**, including actual Keychain save/update/load/delete. Source `7d6ac3493b21811ef3734e8171a8e8682f6e0463`. See [remembered transfers](docs/REMEMBERED-TRANSFERS.md). This implementation is included in 0.4.0; system-granted continuation now takes precedence over Home pause.
 
 ## Version 0.3.0 — Android-to-iPhone pause/resume
 
