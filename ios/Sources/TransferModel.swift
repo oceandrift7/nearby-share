@@ -203,7 +203,7 @@ final class TransferModel: ObservableObject {
         continuedTransfer.begin(total:total,completed:completed,sending:sending,expire:{ [weak self] in
             guard let self, self.cancellation === token, self.busy else { return }
             token.cancel()
-            if self.sending { self.cancel() } else { self.pauseForBackground() }
+            if self.sending || self.manifest?.supportsResume != true { self.cancel() } else { self.pauseForBackground() }
         },state:{ [weak self] message in
             guard let self, self.cancellation === token else { return }
             self.backgroundHint = message

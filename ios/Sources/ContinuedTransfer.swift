@@ -3,6 +3,9 @@ import BackgroundTasks
 import UIKit
 
 @MainActor
+private final class BackgroundRequestCompletion { var result: Bool? }
+
+@MainActor
 protocol TransferBackgroundProviding: AnyObject {
     var canContinue: Bool { get }
     func begin(total: Int64, completed: Int64, sending: Bool, expire: @escaping () -> Void, state: @escaping (String) -> Void)
@@ -17,6 +20,7 @@ final class ContinuedTransfer: TransferBackgroundProviding {
     private var nativeTask: AnyObject?
     private var identifier: String?
     private var marker: UUID?
+    private var completion: BackgroundRequestCompletion?
     private var expired = false
     private var total: Int64 = 1
     private var completed: Int64 = 0
@@ -25,7 +29,7 @@ final class ContinuedTransfer: TransferBackgroundProviding {
 
     func begin(total: Int64, completed: Int64, sending: Bool, expire: @escaping () -> Void, state: @escaping (String) -> Void) {
         finish(success:false)
-        self.total=max(0,total)+1; self.completed=max(0,completed); self.sending=sending; expired=false
+        self.total=max(0,total); self.completed=max(0,completed); self.sending=sending; expired=false
         let fallback = sending ? "Keep Nearby open until Android confirms the save." : "Keep Nearby open. Leaving the app pauses this download."
         guard #available(iOS 26.0, *) else { state(fallback); return }
         #if targetEnvironment(simulator)
@@ -41,21 +45,22 @@ final class ContinuedTransfer: TransferBackgroundProviding {
             state("Background progress is unavailable in this installation. "+fallback); return
         }
         let current=UUID(); marker=current; identifier=id
+        let completion=BackgroundRequestCompletion(); self.completion=completion
         let registered=BGTaskScheduler.shared.register(forTaskWithIdentifier:id,using:.main) { [weak self] task in
             // Continued-processing registration is allowed after launch. Each
             // identifier is registered once; weak capture cannot retain old transfers.
             MainActor.assumeIsolated {
                 guard let self, self.marker==current, let continued=task as? BGContinuedProcessingTask else {
-                    task.setTaskCompleted(success:false); return
+                    task.setTaskCompleted(success:completion.result ?? false); return
                 }
                 self.nativeTask=continued
-                continued.progress.totalUnitCount=self.total
-                continued.progress.completedUnitCount=min(self.completed,self.total-1)
+                continued.progress.totalUnitCount=10_000
+                continued.progress.completedUnitCount=Self.workUnits(completed:self.completed,total:self.total)
                 continued.expirationHandler = { [weak self] in
                     Task { @MainActor in
                         guard let self, self.marker==current else { return }
                         self.expired=true
-                        state("Background transfer stopped. Saved download pieces are kept; return to Nearby to resume.")
+                        state(self.sending ? "Background sending stopped. Check Android before trying again." : "Background transfer stopped. Saved download pieces are kept; return to Nearby to resume.")
                         expire()
                     }
                 }
@@ -70,16 +75,17 @@ final class ContinuedTransfer: TransferBackgroundProviding {
         #endif
     }
     func update(completed: Int64, total: Int64) {
-        self.total=max(0,total)+1; self.completed=max(0,min(completed,max(0,total)))
+        self.total=max(0,total); self.completed=max(0,min(completed,max(0,total)))
         if #available(iOS 26.0,*), let task=nativeTask as? BGContinuedProcessingTask, !expired {
-            task.progress.totalUnitCount=self.total
-            task.progress.completedUnitCount=self.completed
+            task.progress.totalUnitCount=10_000
+            task.progress.completedUnitCount=Self.workUnits(completed:self.completed,total:self.total)
             let percent=total>0 ? Int(Double(self.completed)/Double(total)*100) : 0
             task.updateTitle("Nearby transfer",subtitle:completed>=total ? "Verifying the saved file…" : "\(sending ? "Sending" : "Receiving") \(percent)%")
         }
     }
     func finish(success: Bool) {
         let wasExpired=expired
+        completion?.result=success && !wasExpired
         marker=nil
         if #available(iOS 26.0,*) {
             if let task=nativeTask as? BGContinuedProcessingTask {
@@ -88,6 +94,10 @@ final class ContinuedTransfer: TransferBackgroundProviding {
             }
             if let identifier { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier:identifier) }
         }
-        nativeTask=nil; identifier=nil; expired=false
+        nativeTask=nil; identifier=nil; completion=nil; expired=false
+    }
+    static func workUnits(completed: Int64,total: Int64) -> Int64 {
+        // Reserve the final percent for whole-file verification/receiver receipt.
+        total>0 ? Int64(Double(max(0,min(completed,total)))/Double(total)*9900) : 0
     }
 }

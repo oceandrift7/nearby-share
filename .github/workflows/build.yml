@@ -137,7 +137,7 @@ jobs:
         working-directory: ios
         shell: bash
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime,group in devices.items() if runtime.endswith("iOS-26-2") for d in group if d["name"] == "iPhone 17 Pro Max"))')
           # Let Xcode embed simulated entitlements at link time and ad-hoc sign
           # the host. Applying iOS entitlements to a macOS simulator signature
           # with codesign prevents launch; disabling signing loses Keychain access.
@@ -149,12 +149,14 @@ jobs:
           python3 -c 'from pathlib import Path; lines=Path("simulator-test.log").read_text().splitlines(); report=[s[s.index("NEARBY_BENCHMARK ")+17:] for s in lines if "NEARBY_BENCHMARK " in s]; assert report, "Missing benchmark result"; Path("iphone-transfer-benchmark.jsonl").write_text("\n".join(report)+"\n")'
       - name: Diagnose simulator launch or Keychain failure
         if: failure()
-        run: xcrun simctl spawn booted log show --last 5m --style compact --predicate 'process == "NearbyPrototype" OR process == "securityd" OR process == "amfid"' | tail -100
+        run: |
+          tail -80 /tmp/nearby-tls.log
+          xcrun simctl spawn booted log show --last 5m --style compact --predicate 'process == "NearbyPrototype" OR process == "securityd" OR process == "amfid"' | tail -100
       - name: Capture native iPhone screen
         if: ${{ inputs.capture_ui == true }}
         working-directory: ios
         run: |
-          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
+          DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime,group in devices.items() if runtime.endswith("iOS-26-2") for d in group if d["name"] == "iPhone 17 Pro Max"))')
           xcrun simctl bootstatus "$DEVICE_ID" -b
           xcrun simctl install "$DEVICE_ID" build-simulator/Build/Products/Debug-iphonesimulator/NearbyPrototype.app
           xcrun simctl launch "$DEVICE_ID" org.nearbyshare.prototype

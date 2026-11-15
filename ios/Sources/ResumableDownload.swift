@@ -84,8 +84,7 @@ final class DownloadCheckpoint {
             }
             try cancellation.check()
             try output.synchronize()
-            try JSONEncoder().encode(State(offset: offset + length)).write(to: metadata, options: .atomic)
-            try FileManager.default.setAttributes([.protectionKey:FileProtectionType.completeUntilFirstUserAuthentication],ofItemAtPath:metadata.path)
+            try JSONEncoder().encode(State(offset: offset + length)).write(to: metadata, options: [.atomic,.completeFileProtectionUntilFirstUserAuthentication])
             offset += length
         } catch {
             try? output.truncate(atOffset: UInt64(offset)); try? output.synchronize()

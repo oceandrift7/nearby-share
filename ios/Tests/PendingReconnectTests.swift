@@ -19,6 +19,14 @@ final class BackgroundProbe: TransferBackgroundProviding {
 
 @MainActor
 final class PendingReconnectTests: XCTestCase {
+    func testSystemProgressReservesSuccessUntilVerificationAndBoundsByteCounts() {
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:0,total:100),0)
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:50,total:100),4950)
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:100,total:100),9900)
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:Int64.max,total:100),9900)
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:-1,total:100),0)
+        XCTAssertEqual(ContinuedTransfer.workUnits(completed:0,total:0),0)
+    }
     private func bytes() -> Data { Data((0..<(3*1024*1024+17)).map { UInt8($0 % 251) }) }
     private func fixture(token: String = "e") throws -> (Pairing,Manifest,Data) {
         let certificate = try Data(contentsOf:XCTUnwrap(Bundle(for:Self.self).url(forResource:"localhost",withExtension:"der")))

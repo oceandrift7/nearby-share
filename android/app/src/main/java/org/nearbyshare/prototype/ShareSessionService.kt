@@ -66,6 +66,7 @@ class ShareSessionService : Service() {
     }
     private fun notice(text: String, bytes: Long = 0, total: Long = 0, force: Boolean = false) {
         if (!active) return
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         val now = SystemClock.elapsedRealtime()
         if (!force && now-lastNotice < 500) return
         lastNotice = now
@@ -155,7 +156,8 @@ class ShareSessionService : Service() {
                 override fun onFailed(reason: Int) { if(generation==run) fail("Hotspot failed ($reason). Enable Wi-Fi and Location; turn off existing tethering, then retry.") }
                 override fun onStopped() { if(generation==run) fail("Hotspot stopped. Share the saved file again to reconnect.") }
             },main)
-        } catch(error: Exception) { fail("Could not start sharing: ${error.message}") }
+        } catch(error: SecurityException) { fail("Hotspot permission was denied or revoked. Allow Nearby's connection permission and retry.") }
+        catch(error: Exception) { fail("Could not start sharing: ${error.message}") }
     }
     private fun renderIncoming() {
         val item=inbox?.snapshot()?:return
