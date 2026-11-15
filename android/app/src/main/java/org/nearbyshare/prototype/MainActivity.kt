@@ -3,6 +3,10 @@ package org.nearbyshare.prototype
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.ComponentName
+import android.content.Context
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -39,11 +43,9 @@ class MainActivity : Activity() {
     private var wifiBitmap: Bitmap? = null
     private var pairingBitmap: Bitmap? = null
     private val worker = Executors.newSingleThreadExecutor()
-    private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
-    private var server: NanoHTTPD? = null
     private var selected: File? = null
     @Volatile private var generation = 0
-    private var inbox: ReceiveInbox? = null
+    private val inbox: ReceiveInbox? get() = shareService?.inbox
     private lateinit var receiveButton: Button
     private lateinit var acceptButton: Button
     private lateinit var rejectButton: Button
@@ -56,10 +58,38 @@ class MainActivity : Activity() {
     private lateinit var forgetShares: Button
     private lateinit var savedShareInfo: TextView
 
+    private var shareService: ShareSessionService? = null
+    private var bound = false
+    private var shownPairing: String? = null
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            shareService = (binder as ShareSessionService.LocalBinder).service
+            shareService?.listener = { renderSession() }
+            renderSession()
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            shareService = null
+            status.text = "Sharing service stopped. Use a saved file to reconnect."
+        }
+    }
+    private fun renderSession() {
+        val service = shareService ?: return
+        status.text = service.message
+        val code = service.pairingCode
+        if (code != shownPairing) {
+            shownPairing = code
+            pairingBitmap = code?.let { qrBitmap(it) }
+            wifiBitmap = service.wifiCode?.let { qrBitmap(it) }
+            qrSteps.visibility = if (code == null) android.view.View.GONE else android.view.View.VISIBLE
+            if (code != null) showCode(wifi = true) else { qr.setImageDrawable(null); qrHelp.text = "" }
+        }
+        if (service.inbox?.snapshot() != null) renderIncoming()
+        else { acceptButton.visibility = android.view.View.GONE; rejectButton.visibility = android.view.View.GONE; saveButton.visibility = android.view.View.GONE }
+        if (!service.active) { choose.isEnabled = true; receiveButton.isEnabled = true }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        cacheDir.listFiles()?.filter { it.name.startsWith("outgoing-") && it.name.endsWith(".bin") }?.forEach { it.delete() }
-        File(filesDir, "received").listFiles()?.filter { it.extension == "partial" }?.forEach { it.delete() }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val ink = Color.rgb(22, 38, 61)
         val blue = Color.rgb(28, 79, 240)
@@ -189,11 +219,12 @@ class MainActivity : Activity() {
         }
         layout.addView(qr, LinearLayout.LayoutParams(-1, -2))
         layout.addView(TextView(this).apply {
-            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.3.1 · Android ↔ iPhone"
+            text = "Android stays active through its transfer notification. On iPhone, follow the displayed background status. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.4.0 · Android ↔ iPhone"
             textSize = 13f; setTextColor(Color.rgb(84, 102, 122)); setPadding(0, dp(20), 0, 0)
         })
         setContentView(ScrollView(this).apply { addView(layout) })
         refreshSavedShares()
+        bound = bindService(Intent(this, ShareSessionService::class.java), connection, Context.BIND_AUTO_CREATE)
     }
 
     @Deprecated("Prototype uses platform picker")
@@ -261,95 +292,33 @@ class MainActivity : Activity() {
     private fun startWithPermission(name: String, file: File?, hash: String) {
         val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
         if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-            pending = { startHotspot(name, file, hash) }
+            pending = { startWithPermission(name, file, hash) }
             val permissions = if (Build.VERSION.SDK_INT >= 33) arrayOf(permission)
                 else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             requestPermissions(permissions, 20)
+        } else if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pending = { startHotspot(name,file,hash) }
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),21)
         } else startHotspot(name, file, hash)
     }
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
         val action = pending; pending = null
-        if (code == 20 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
+        if (code == 21) action?.invoke()
+        else if (code == 20 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
         else if (code == 20) { status.text = "Permission required to create the temporary connection."; choose.isEnabled = true; receiveButton.isEnabled = true }
     }
 
     private fun startHotspot(name: String, file: File?, hash: String) {
-        val run = generation
-        status.text = "Starting offline hotspot… On Android 10–12, enable Location in system settings if this fails. No location is recorded."
-        try {
-            getSystemService(WifiManager::class.java).startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
-                override fun onStarted(r: WifiManager.LocalOnlyHotspotReservation) {
-                    if (generation != run || isDestroyed) { r.close(); return }
-                    reservation = r
-                    @Suppress("DEPRECATION")
-                    val ssid = if (Build.VERSION.SDK_INT >= 30) r.softApConfiguration.ssid!! else r.wifiConfiguration!!.SSID
-                    @Suppress("DEPRECATION")
-                    val password = if (Build.VERSION.SDK_INT >= 30) r.softApConfiguration.passphrase!! else r.wifiConfiguration!!.preSharedKey
-                    worker.execute {
-                        var startedServer: NanoHTTPD? = null
-                        try {
-                            val tokenBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                            val token = hex(tokenBytes)
-                            val identity = LocalTlsIdentity.create()
-                            // Public hotspot band/channel APIs are unavailable on our Android
-                            // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
-                            val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.3.1")
-                                .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
-                                .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
-                                .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
-                            val manifest = JSONObject().put("mode", if (file == null) "receive" else "send")
-                                .put("name", if (file == null) "Android receiver" else name).put("size", file?.length() ?: 0)
-                                .put("sha256", if (file == null) "0".repeat(64) else hash).put("diagnostics", diagnostics)
-                            val receiver = if (file == null) ReceiveInbox(File(filesDir, "received")) {
-                                runOnUiThread { if (generation == run) renderIncoming() }
-                            } else null
-                            runOnUiThread { if (generation == run) inbox = receiver else receiver?.close() }
-                            val host = SharedFileServer(9443, token, file, manifest, receiver) {
-                                runOnUiThread { if (generation == run) status.text = "Serving $name. Check the iPhone for verified completion and speed." }
-                            }
-                            startedServer = host
-                            host.makeSecure(identity.context.serverSocketFactory, LocalTlsIdentity.protocols)
-                            host.start(30_000, true)
-                            runOnUiThread { if (generation == run) status.text = "Checking encrypted connection…" }
-                            TlsSelfTest.verify(identity, host.listeningPort, token)
-                            // Interfaces can appear shortly after onStarted. Include all private IPv4
-                            // candidates; the iPhone tries them and accepts only the pinned certificate.
-                            var addresses = emptyList<String>()
-                            repeat(10) {
-                                    addresses = (addresses + NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
-                                        .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>()
-                                        .filter { it.isSiteLocalAddress }.map { it.hostAddress!! }).distinct().take(16)
-                                    check(generation == run) { "Setup cancelled" }; Thread.sleep(200)
-                            }
-                            if (addresses.isEmpty()) { host.stop(); error("No local hotspot address found. Stop and retry.") }
-                            val pairing = JSONObject().put("v", 1).put("ssid", ssid).put("password", password)
-                                .put("hosts", JSONArray(addresses)).put("port", 9443).put("token", token).put("certificateSHA256", identity.pin)
-                            val pairingCode = qrBitmap(pairing.toString())
-                            val wifiCode = qrBitmap(WifiQr.encode(ssid, password))
-                            runOnUiThread {
-                                if (generation != run || isDestroyed) host.stop()
-                                else {
-                                    server = host; pairingBitmap = pairingCode; wifiBitmap = wifiCode
-                                    qrSteps.visibility = android.view.View.VISIBLE
-                                    showCode(wifi = true)
-                                    status.text = if (file == null) "Ready to receive. Connect and pair the iPhone, then choose a file on it. Keep both apps open." else "Ready to share $name (${file.length()} bytes). Keep this app open."
-                                }
-                            }
-                        } catch (e: Exception) {
-                            startedServer?.stop()
-                            runOnUiThread { if (generation == run) { stopSharing(); status.text = "Setup failed: ${e.javaClass.simpleName}: ${e.message}" } }
-                        }
-                    }
-                }
-                override fun onFailed(reason: Int) { if (generation == run) { stopSharing(); status.text = "Hotspot failed ($reason). Enable Wi-Fi and Location; turn off existing tethering, then retry." } }
-                override fun onStopped() { if (generation == run) { stopSharing(); status.text = "Hotspot stopped." } }
-            }, Handler(Looper.getMainLooper()))
-        } catch (e: SecurityException) {
-            stopSharing(); status.text = "Hotspot permission was denied or revoked. Allow the requested permission, then retry."
-        } catch (e: Exception) { stopSharing(); status.text = "Could not start hotspot: ${e.message}" }
+        val service = shareService
+        if (service == null) {
+            choose.isEnabled = true; receiveButton.isEnabled = true
+            status.text = "Nearby is still starting. Try again in a moment."
+            return
+        }
+        service.startSharing(name,file,hash)
+        renderSession()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -374,9 +343,8 @@ class MainActivity : Activity() {
     private fun stopSharing() {
         generation++; pending = null
         displayedOfferID = null
-        inbox?.close(); inbox = null
-        server?.stop(); server = null
-        val old = reservation; reservation = null; old?.close()
+        shareService?.stopSharing()
+        shownPairing = null
         selected = null // Saved private snapshots survive stopping/reopening; Forget deletes them.
         if (::qr.isInitialized) qr.setImageDrawable(null)
         wifiBitmap = null; pairingBitmap = null
@@ -444,6 +412,11 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onDestroy() { stopSharing(); worker.shutdown(); super.onDestroy() }
+    override fun onDestroy() {
+        generation++ // Cancel only Activity-owned preparation, never the service's active session.
+        shareService?.listener = null
+        if (bound) { unbindService(connection); bound = false }
+        shareService = null; worker.shutdown(); super.onDestroy()
+    }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
 }

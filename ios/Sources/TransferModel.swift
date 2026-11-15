@@ -77,6 +77,8 @@ final class TransferModel: ObservableObject {
     @Published var pendingDownloads: [PendingDownloadRow] = []
     @Published var requestedResumeScan = false
     @Published var historyWarning = ""
+    @Published var backgroundHint = ""
+    private let continuedTransfer: TransferBackgroundProviding
     private let pendingStore: PendingDownloadStore?
     private var resumeScanTarget: PendingDownload?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -93,7 +95,8 @@ final class TransferModel: ObservableObject {
     private var host: String?
     private var cancelled = false
 
-    init(pendingStore: PendingDownloadStore? = nil) {
+    init(pendingStore: PendingDownloadStore? = nil, background: TransferBackgroundProviding? = nil) {
+        self.continuedTransfer = background ?? ContinuedTransfer()
         self.pendingStore = pendingStore ?? (try? PendingDownloadStore())
         refreshPendingDownloads()
     }
@@ -171,7 +174,10 @@ final class TransferModel: ObservableObject {
     }
 
     func pauseForBackground() {
-        guard busy, !sending, manifest?.supportsResume == true else { return }
+        guard busy else { return }
+        if continuedTransfer.canContinue { return }
+        if sending { cancel(); backgroundHint = "Background sending stopped. Check Android before trying again."; return }
+        guard manifest?.supportsResume == true else { return }
         if backgroundTask == .invalid {
             let marker = UUID()
             let pausedCancellation = cancellation
@@ -190,6 +196,18 @@ final class TransferModel: ObservableObject {
         guard backgroundTask != .invalid else { return }
         let task = backgroundTask; backgroundTask = .invalid; backgroundGuard = nil
         UIApplication.shared.endBackgroundTask(task)
+    }
+
+    private func beginContinuedTransfer(total: Int64, completed: Int64, sending: Bool) {
+        let token = cancellation
+        continuedTransfer.begin(total:total,completed:completed,sending:sending,expire:{ [weak self] in
+            guard let self, self.cancellation === token, self.busy else { return }
+            token.cancel()
+            if self.sending { self.cancel() } else { self.pauseForBackground() }
+        },state:{ [weak self] message in
+            guard let self, self.cancellation === token else { return }
+            self.backgroundHint = message
+        })
     }
 
     func scan(_ text: String) {
@@ -299,7 +317,9 @@ final class TransferModel: ObservableObject {
         busy = true; cancelled = false; cancellation = TransferCancellation()
         progress = manifest.size == 0 ? 0 : Double(savedDownloadBytes) / Double(manifest.size)
         received = nil; senderReadSummary = nil; discardAfterStop = false
-        defer { busy = false; endBackgroundProtection(); refreshPendingDownloads() }
+        var verified = false
+        beginContinuedTransfer(total:manifest.size,completed:savedDownloadBytes,sending:false)
+        defer { continuedTransfer.finish(success:verified); busy = false; endBackgroundProtection(); refreshPendingDownloads() }
         do {
             if manifest.supportsResume == true { rememberDownload(pairing,manifest) }
             if manifest.supportsResume != true { try TransferStorage.requireSpace(manifest.size, at: FileManager.default.temporaryDirectory) }
@@ -311,6 +331,7 @@ final class TransferModel: ObservableObject {
             let onProgress: (Int64) -> Void = { [weak self] count in
                 Task { @MainActor in
                     guard let self, self.cancellation === receiveCancellation, !self.cancelled, self.busy, self.received == nil else { return }
+                    self.continuedTransfer.update(completed:count,total:manifest.size)
                     self.progress = manifest.size == 0 ? 1 : Double(count) / Double(manifest.size)
                     self.status = "Received \(ByteCountFormatter.string(fromByteCount: count, countStyle: .file))."
                 }
@@ -326,6 +347,7 @@ final class TransferModel: ObservableObject {
             guard !cancelled || (manifest.supportsResume == true && !discardAfterStop) else {
                 try? FileManager.default.removeItem(at: result.url); throw CancellationError()
             }
+            verified = true
             received = result.url; progress = 1; savedDownloadBytes = 0
             let completed = PendingDownload(name:manifest.name,size:manifest.size,sha256:manifest.sha256,certificateSHA256:pairing.certificateSHA256)
             try? pendingStore?.remove(completed)
@@ -368,7 +390,10 @@ final class TransferModel: ObservableObject {
         cancellation = TransferCancellation()
         let cancellation = self.cancellation
         var prepared: OutgoingFile?
+        var verified = false
+        beginContinuedTransfer(total:0,completed:0,sending:true)
         defer {
+            continuedTransfer.finish(success:verified)
             if let prepared { try? FileManager.default.removeItem(at: prepared.url) }
             busy = false; sending = false; activeOffer = nil
         }
@@ -378,6 +403,7 @@ final class TransferModel: ObservableObject {
                 try OutgoingFile.prepare(source, cancellation: cancellation)
             }.value
             prepared = file
+            continuedTransfer.update(completed:0,total:file.size)
             try cancellation.check()
             var offer = makeRequest(pairing: pairing, host: host, path: "offer", timeout: 10)
             offer.httpMethod = "POST"
@@ -413,7 +439,8 @@ final class TransferModel: ObservableObject {
             let start = ProcessInfo.processInfo.systemUptime
             let result = try await agent.upload(session: session, request: request, file: file, cancellation: cancellation) { [weak self] bytes in
                 Task { @MainActor in
-                    guard let self, self.sending, !self.cancelled else { return }
+                    guard let self, self.cancellation === cancellation, self.sending, !self.cancelled else { return }
+                    self.continuedTransfer.update(completed:bytes,total:file.size)
                     self.progress = file.size == 0 ? 1 : min(1, Double(bytes) / Double(file.size))
                     self.status = bytes >= file.size ? "Android is verifying the file…" : "Sent \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))."
                 }
@@ -421,9 +448,10 @@ final class TransferModel: ObservableObject {
             guard result.verifies(file, id: receipt.id) else { throw TransferError.message("Android did not confirm a verified save. Check Android before retrying.") }
             try cancellation.check()
             let seconds = max(ProcessInfo.processInfo.systemUptime - start, 0.001)
+            verified = true
             progress = 1
             status = String(format: "Android verified and saved the file. %.2f s · %.1f MB/s. Tap Save received file on Android to choose a location.", seconds, Double(file.size) / seconds / 1_000_000)
-            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.3.1\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
+            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.4.0\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
         } catch {
             // Best effort revoke even after the original session was cancelled.
             // Android also discards incomplete uploads when its socket closes.
@@ -498,6 +526,7 @@ final class TransferModel: ObservableObject {
         }
         pairing = nil; manifest = nil; received = nil; host = nil; progress = 0; savedDownloadBytes = 0
         senderReadSummary = nil
+        backgroundHint = ""
         diagnosticReport = ""; manualJoinSuggested = false; joinResult = "not attempted"
         refreshPendingDownloads()
         status = "Pairing cleared. Incomplete downloads remain in Unfinished downloads. To leave a network joined in Camera or Settings, use Settings → Wi-Fi. Previously received files remain in Files → On My iPhone → Nearby prototype."
@@ -512,7 +541,7 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.3.1", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.4.0", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {

@@ -3,6 +3,21 @@ import CryptoKit
 @testable import NearbyPrototype
 
 @MainActor
+final class BackgroundProbe: TransferBackgroundProviding {
+    var canContinue = false
+    var expire: (() -> Void)?
+    var finished: [Bool] = []
+    var latestBytes: Int64 = 0
+    func begin(total:Int64,completed:Int64,sending:Bool,expire:@escaping () -> Void,state:@escaping (String)->Void) {
+        canContinue=true; self.expire=expire; latestBytes=completed
+        state("Background transfer enabled")
+    }
+    func update(completed:Int64,total:Int64) { latestBytes=completed }
+    func finish(success:Bool) { canContinue=false; finished.append(success) }
+    func expireNow() { canContinue=false; expire?() }
+}
+
+@MainActor
 final class PendingReconnectTests: XCTestCase {
     private func bytes() -> Data { Data((0..<(3*1024*1024+17)).map { UInt8($0 % 251) }) }
     private func fixture(token: String = "e") throws -> (Pairing,Manifest,Data) {
@@ -105,5 +120,49 @@ final class PendingReconnectTests: XCTestCase {
         let received=try XCTUnwrap(model.received)
         defer { try? FileManager.default.removeItem(at:received) }
         XCTAssertEqual(try Data(contentsOf:received),data)
+    }
+    func testGrantedBackgroundExecutionContinuesThroughHomeAndVerifies() async throws {
+        let (pairing,file,data)=try fixture(token:"d")
+        let (directory,_,store)=try prepare(pairing,file,data)
+        let background=BackgroundProbe()
+        let model=TransferModel(pendingStore:store,background:background)
+        defer { cleanup(directory,pairing,file,model) }
+        model.pairing=pairing; await model.connect(joinNetwork:false)
+        let transfer=Task { await model.receive() }
+        let deadline=Date().addingTimeInterval(15)
+        while model.progress <= Double(1024*1024)/Double(file.size) && Date()<deadline {
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        XCTAssertTrue(model.busy); XCTAssertTrue(background.canContinue)
+        model.pauseForBackground()
+        await transfer.value
+        XCTAssertEqual(try Data(contentsOf:XCTUnwrap(model.received)),data)
+        XCTAssertEqual(background.finished.last,true)
+        XCTAssertGreaterThan(background.latestBytes,1024*1024)
+    }
+    func testSystemBackgroundCancellationKeepsPiecesAndOldExpiryCannotStopNewResume() async throws {
+        let (pairing,file,data)=try fixture(token:"d")
+        let (directory,_,store)=try prepare(pairing,file,data)
+        let background=BackgroundProbe()
+        let model=TransferModel(pendingStore:store,background:background)
+        defer { cleanup(directory,pairing,file,model) }
+        model.pairing=pairing; await model.connect(joinNetwork:false)
+        let first=Task { await model.receive() }
+        let deadline=Date().addingTimeInterval(15)
+        while model.progress <= Double(1024*1024)/Double(file.size) && Date()<deadline {
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        let oldExpiry=try XCTUnwrap(background.expire)
+        background.expireNow(); await first.value
+        XCTAssertNil(model.received)
+        XCTAssertEqual(model.pendingDownloads.first?.savedBytes,1024*1024)
+        XCTAssertEqual(background.finished.last,false)
+        let item=try XCTUnwrap(model.pendingDownloads.first?.download)
+        let second=Task { await model.resumePending(item) }
+        while !background.canContinue && Date()<deadline { try await Task.sleep(nanoseconds:10_000_000) }
+        oldExpiry() // A delayed callback from the previous task must not cancel this one.
+        await second.value
+        XCTAssertEqual(try Data(contentsOf:XCTUnwrap(model.received)),data)
+        XCTAssertEqual(background.finished.last,true)
     }
 }

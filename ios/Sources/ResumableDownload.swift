@@ -46,6 +46,7 @@ final class DownloadCheckpoint {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var attributes = URLResourceValues(); attributes.isExcludedFromBackup = true
         try directory.setResourceValues(attributes)
+        try FileManager.default.setAttributes([.protectionKey:FileProtectionType.completeUntilFirstUserAuthentication],ofItemAtPath:directory.path)
         return directory
     }
 
@@ -67,7 +68,7 @@ final class DownloadCheckpoint {
         } else {
             try? FileManager.default.removeItem(at: metadata)
             try? FileManager.default.removeItem(at: part)
-            guard FileManager.default.createFile(atPath: part.path, contents: nil) else { throw TransferError.message("Could not create download checkpoint.") }
+            guard FileManager.default.createFile(atPath: part.path, contents: nil, attributes:[.protectionKey:FileProtectionType.completeUntilFirstUserAuthentication]) else { throw TransferError.message("Could not create download checkpoint.") }
         }
     }
 
@@ -84,6 +85,7 @@ final class DownloadCheckpoint {
             try cancellation.check()
             try output.synchronize()
             try JSONEncoder().encode(State(offset: offset + length)).write(to: metadata, options: .atomic)
+            try FileManager.default.setAttributes([.protectionKey:FileProtectionType.completeUntilFirstUserAuthentication],ofItemAtPath:metadata.path)
             offset += length
         } catch {
             try? output.truncate(atOffset: UInt64(offset)); try? output.synchronize()

@@ -25,7 +25,7 @@ struct OutgoingFile {
         let directory = FileManager.default.temporaryDirectory
         try TransferStorage.requireSpace(Int64(values.fileSize ?? 0), at: directory)
         let destination = directory.appendingPathComponent("nearby-outgoing-\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes:[.protectionKey:FileProtectionType.completeUntilFirstUserAuthentication]) else {
             throw TransferError.message("Could not prepare temporary storage.")
         }
         do {

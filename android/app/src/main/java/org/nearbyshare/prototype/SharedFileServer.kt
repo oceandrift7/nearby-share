@@ -9,6 +9,7 @@ import java.io.File
 class SharedFileServer(port: Int, private val token: String, private val file: File?,
                        private val manifest: JSONObject, private val inbox: ReceiveInbox? = null,
                        private val onFileRequested: () -> Unit) : NanoHTTPD(port) {
+    var onTransferProgress: ((Long, Long) -> Unit)? = null
     private val readReports = SenderReadReports()
     internal val connections = LimitedConnections()
     init { setAsyncRunner(connections) }
@@ -38,7 +39,7 @@ class SharedFileServer(port: Int, private val token: String, private val file: F
                     onFileRequested()
                     val source = file.inputStream()
                     source.channel.position(start)
-                    return newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, "application/octet-stream", source.buffered(262144), end - start + 1).also {
+                    return newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, "application/octet-stream", progressStream(source.buffered(262144), start, end - start + 1, file.length()), end - start + 1).also {
                         it.addHeader("Content-Range", "bytes $start-$end/${file.length()}")
                         it.addHeader("ETag", etag); it.addHeader("Accept-Ranges", "bytes"); it.addHeader("Cache-Control", "no-store")
                     }
@@ -47,7 +48,7 @@ class SharedFileServer(port: Int, private val token: String, private val file: F
                 val id = session.headers["x-nearby-transfer-id"]
                 val input = file.inputStream().buffered(262144)
                 val measured = if (readReports.validID(id)) TimedSnapshotInputStream(input) { readReports.put(id!!, it) } else input
-                newFixedLengthResponse(Response.Status.OK, "application/octet-stream", measured, file.length())
+                newFixedLengthResponse(Response.Status.OK, "application/octet-stream", progressStream(measured,0,file.length(),file.length()), file.length())
             }
             "/transfer-stats" -> {
                 val id = session.parameters["id"]?.firstOrNull()
@@ -60,4 +61,24 @@ class SharedFileServer(port: Int, private val token: String, private val file: F
         response.addHeader("Cache-Control", "no-store")
         return response
     }
+    private fun progressStream(input: java.io.InputStream, start: Long, length: Long, total: Long): java.io.InputStream {
+        if (onTransferProgress == null) return input
+        return object : java.io.FilterInputStream(input) {
+            private var count = 0L
+            private var reported = -1L
+            private var last = 0L
+            private fun record(amount: Int) {
+                if (amount <= 0) return
+                count = (count + amount).coerceAtMost(length)
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (count != reported && (count == length || now-last >= 500)) {
+                    reported=count; last=now
+                    try { onTransferProgress?.invoke(start+count,total) } catch (_: Exception) { /* UI cannot fail transfer. */ }
+                }
+            }
+            override fun read(): Int = `in`.read().also { if(it>=0) record(1) }
+            override fun read(buffer: ByteArray, offset: Int, size: Int): Int = `in`.read(buffer,offset,size).also { record(it) }
+        }
+    }
+
 }

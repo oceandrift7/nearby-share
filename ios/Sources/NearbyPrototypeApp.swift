@@ -52,6 +52,7 @@ struct TransferView: View {
                             }
                         }.nearbyCard()
                     }
+                    if model.busy && !model.backgroundHint.isEmpty { Text(model.backgroundHint).font(.footnote).foregroundStyle(.secondary) }
                     if !model.historyWarning.isEmpty { Text(model.historyWarning).font(.footnote).foregroundStyle(.secondary) }
                     DisclosureGroup("How to connect") {
                         Text("First scan Android’s step 1 Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the step 2 Nearby pairing code here. Keep both apps open. Choose a file on Android to send here, or tap Receive from iPhone on Android to send in the other direction. Android asks you to accept before receiving. iPhone-to-iPhone is not supported yet.")
@@ -134,7 +135,7 @@ struct TransferView: View {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
                     Button("Discard all incomplete downloads") { model.discardAllDownloads() }.disabled(model.busy).font(.footnote)
-                    Text("Nearby 0.3.1 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
+                    Text("Nearby 0.4.0 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
             }.background(Color(uiColor: .systemGroupedBackground))
                 .toolbar(.hidden, for: .navigationBar)
