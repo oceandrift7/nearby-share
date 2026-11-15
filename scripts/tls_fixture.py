@@ -34,6 +34,16 @@ else:
         protocol_version = 'HTTP/1.1'
         def do_GET(self):
             parsed = urllib.parse.urlsplit(self.path)
+            authorization = self.headers.get('Authorization','')
+            model_peer = authorization in ('Bearer '+'e'*64,'Bearer '+'f'*64,'Bearer '+'d'*64)
+            if parsed.path == '/manifest' and model_peer:
+                changed = authorization == 'Bearer '+'f'*64
+                data = json.dumps({'name':'other.bin' if changed else 'resumed.bin',
+                    'size':4096 if changed else resume_size,
+                    'sha256':hashlib.sha256(b'X'*4096).hexdigest() if changed else resume_hash,
+                    'supportsResume':True,'mode':'send'}).encode()
+                self.send_response(200); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+                return
             if parsed.path == '/benchmark-range':
                 match = re.fullmatch(r'bytes=(\d+)-(\d+)',self.headers.get('Range',''))
                 if not match or self.headers.get('If-Match') != '"'+benchmark_hash+'"':
@@ -44,9 +54,10 @@ else:
                 self.send_header('Content-Range',f'bytes {start}-{end}/{benchmark_size}')
                 self.send_header('ETag','"'+benchmark_hash+'"'); self.end_headers()
                 self.wfile.write(b'Z'*(end-start+1)); return
-            if parsed.path == '/resume-test':
+            if parsed.path == '/resume-test' or (parsed.path == '/file' and model_peer):
                 params = urllib.parse.parse_qs(parsed.query)
                 fault = params.get('fault',[''])[0]
+                if parsed.path == '/file' and authorization == 'Bearer '+'d'*64: fault = 'slow'
                 key = params.get('run',[''])[0]
                 match = re.fullmatch(r'bytes=(\d+)-(\d+)', self.headers.get('Range',''))
                 if not match or self.headers.get('If-Match') != '"'+resume_hash+'"':

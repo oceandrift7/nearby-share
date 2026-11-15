@@ -3,8 +3,9 @@ import Combine
 import NetworkExtension
 import CryptoKit
 import Security
+import UIKit
 
-struct Pairing: Decodable {
+struct Pairing: Codable {
     let v: Int
     let ssid: String
     let password: String
@@ -73,6 +74,12 @@ final class TransferModel: ObservableObject {
     @Published var manualJoinSuggested = false
     @Published var sending = false
     @Published var savedDownloadBytes: Int64 = 0
+    @Published var pendingDownloads: [PendingDownloadRow] = []
+    @Published var requestedResumeScan = false
+    @Published var historyWarning = ""
+    private let pendingStore: PendingDownloadStore?
+    private var resumeScanTarget: PendingDownload?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var discardAfterStop = false
     var androidReceives: Bool { manifest?.mode == "receive" }
     private var cancellation = TransferCancellation()
@@ -85,8 +92,100 @@ final class TransferModel: ObservableObject {
     private var host: String?
     private var cancelled = false
 
+    init(pendingStore: PendingDownloadStore? = nil) {
+        self.pendingStore = pendingStore ?? (try? PendingDownloadStore())
+        refreshPendingDownloads()
+    }
+
+    private func refreshPendingDownloads() {
+        pendingDownloads = (pendingStore?.all() ?? []).map { item in
+            PendingDownloadRow(download:item,
+                savedBytes:DownloadCheckpoint.savedOffset(pin:item.certificateSHA256,manifest:item.manifest),
+                canReconnect:pairing?.certificateSHA256 == item.certificateSHA256 || pendingStore?.pairing(for:item) != nil)
+        }
+    }
+
+    private func rememberDownload(_ pairing: Pairing, _ file: Manifest) {
+        guard let pendingStore else { historyWarning = "The reconnect shortcut could not be saved. You can still resume by scanning the file again."; return }
+        do {
+            let saved = try pendingStore.remember(pairing,manifest:file)
+            historyWarning = saved ? "" : "The file is remembered. Scan a fresh pairing code if reconnecting after reopening Nearby."
+        } catch { historyWarning = "The reconnect shortcut could not be saved. Existing download progress is kept separately." }
+    }
+
+    func requestResumeScan(_ item: PendingDownload) {
+        guard !busy else { return }
+        resumeScanTarget = item; requestedResumeScan = true
+    }
+    func takeResumeScanTarget() -> PendingDownload? {
+        defer { resumeScanTarget = nil }; return resumeScanTarget
+    }
+    func cancelResumeScan() { resumeScanTarget = nil; requestedResumeScan = false }
+
+    func handleScannedCode(_ text: String, expected: PendingDownload?) async {
+        let previousBytes = expected.flatMap { item in pendingDownloads.first { $0.id == item.id }?.savedBytes } ?? 0
+        scan(text)
+        guard let expected, pairing != nil else { return }
+        await connect(joinNetwork:false)
+        await finishPendingReconnect(expected,previousBytes:previousBytes)
+    }
+
+    func resumePending(_ item: PendingDownload) async {
+        guard !busy else { return }
+        let previousBytes = pendingDownloads.first { $0.id == item.id }?.savedBytes ?? 0
+        let remembered = pairing?.certificateSHA256 == item.certificateSHA256 ? pairing : pendingStore?.pairing(for:item)
+        guard let remembered else { requestResumeScan(item); return }
+        pairing = remembered
+        await connect(joinNetwork:false)
+        await finishPendingReconnect(item,previousBytes:previousBytes)
+    }
+
+    private func finishPendingReconnect(_ item: PendingDownload, previousBytes: Int64) async {
+        guard !cancelled else { return }
+        guard let pairing, let manifest else {
+            status = "Could not reconnect. Rejoin Android’s hotspot, or share the saved file again on Android and scan its fresh code. Saved file progress is kept.\n" + status
+            return
+        }
+        guard manifest.supportsResume == true else {
+            status = "This sender does not support saved-download resume. Nothing was downloaded. Update Android Nearby before retrying."
+            return
+        }
+        guard item.matches(pairing,manifest) else {
+            status = "Android is sharing a different file or has a different identity. Nothing was downloaded. Choose this file from Android’s Saved shared files and scan its current code."
+            return
+        }
+        guard savedDownloadBytes >= previousBytes else {
+            status = "The earlier saved progress could not be restored. Nothing was downloaded. Accept the file explicitly if you want to start again."
+            return
+        }
+        await receive()
+    }
+
+    func removePending(_ item: PendingDownload) {
+        guard !busy else { return }
+        (try? DownloadCheckpoint(pin:item.certificateSHA256,manifest:item.manifest))?.discard()
+        try? pendingStore?.remove(item)
+        if let pairing, let manifest, item.matches(pairing,manifest) { savedDownloadBytes = 0; progress = 0 }
+        refreshPendingDownloads(); status = "Saved download and reconnect shortcut removed. Completed files remain saved."
+    }
+
+    func pauseForBackground() {
+        guard busy, !sending, manifest?.supportsResume == true else { return }
+        if backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName:"Save download progress") { [weak self] in
+                Task { @MainActor in self?.cancellation.cancel(); self?.endBackgroundProtection() }
+            }
+        }
+        pauseDownload()
+        status = "Paused when Nearby left the screen. Return and tap Resume; completed pieces are kept."
+    }
+    private func endBackgroundProtection() {
+        guard backgroundTask != .invalid else { return }
+        let task = backgroundTask; backgroundTask = .invalid; UIApplication.shared.endBackgroundTask(task)
+    }
+
     func scan(_ text: String) {
-        disconnect()
+        disconnect(forgetRememberedPairing:false)
         // A system Wi-Fi QR is not a pairing code and supplies no TLS identity.
         if text.hasPrefix("WIFI:") {
             status = "That is the Wi-Fi code. Scan it with the iPhone Camera to join. Then show Android's step 2 Nearby code and scan it here."
@@ -100,7 +199,7 @@ final class TransferModel: ObservableObject {
         guard let pairing, !busy else { return }
         busy = true; cancelled = false; cancellation = TransferCancellation()
         manualJoinSuggested = false
-        defer { busy = false }
+        defer { busy = false; refreshPendingDownloads() }
         var stage = "Wi-Fi join"
         do {
             session?.invalidateAndCancel(); session = nil; agent = nil
@@ -164,6 +263,9 @@ final class TransferModel: ObservableObject {
                         savedDownloadBytes = file.supportsResume == true && file.mode != "receive" ?
                             ((try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: file).offset) ?? 0) : 0
                         progress = file.size == 0 ? 0 : Double(savedDownloadBytes) / Double(file.size)
+                        if file.supportsResume == true && file.mode != "receive" && (savedDownloadBytes > 0 || pendingStore?.all().contains(where: { $0.matches(pairing,file) }) == true) {
+                            rememberDownload(pairing,file)
+                        }
                         manualJoinSuggested = false
                         updateReport()
                         status = file.mode == "receive" ? "Android receiver verified. Choose a file to send, then accept it on Android." : "Encrypted connection verified. Accept the file to start."
@@ -186,12 +288,14 @@ final class TransferModel: ObservableObject {
 
     func receive() async {
         guard let pairing, let manifest, !androidReceives, let host, let session, let agent, !busy else { return }
-        busy = true; cancelled = false; cancellation = TransferCancellation(); progress = 0
+        busy = true; cancelled = false; cancellation = TransferCancellation()
+        progress = manifest.size == 0 ? 0 : Double(savedDownloadBytes) / Double(manifest.size)
         received = nil; senderReadSummary = nil; discardAfterStop = false
-        defer { busy = false }
+        defer { busy = false; endBackgroundProtection(); refreshPendingDownloads() }
         do {
+            if manifest.supportsResume == true { rememberDownload(pairing,manifest) }
             if manifest.supportsResume != true { try TransferStorage.requireSpace(manifest.size, at: FileManager.default.temporaryDirectory) }
-            status = "Receiving…"
+            status = savedDownloadBytes > 0 ? "Resuming from \(ByteCountFormatter.string(fromByteCount:savedDownloadBytes,countStyle:.file))…" : "Receiving…"
             let transferID = UUID().uuidString
             var request = makeRequest(pairing: pairing, host: host, path: "file", timeout: 120)
             request.setValue(transferID, forHTTPHeaderField: "X-Nearby-Transfer-ID")
@@ -215,6 +319,8 @@ final class TransferModel: ObservableObject {
                 try? FileManager.default.removeItem(at: result.url); throw CancellationError()
             }
             received = result.url; progress = 1; savedDownloadBytes = 0
+            let completed = PendingDownload(name:manifest.name,size:manifest.size,sha256:manifest.sha256,certificateSHA256:pairing.certificateSHA256)
+            try? pendingStore?.remove(completed)
             // Optional v0.2.0 instrumentation, outside the transfer timer. An old
             // sender, missing record, or timeout must never fail a verified file.
             let statsRequest = makeRequest(pairing: pairing, host: host, path: "transfer-stats?id=\(transferID)", timeout: 2)
@@ -234,7 +340,10 @@ final class TransferModel: ObservableObject {
         } catch {
             if manifest.supportsResume == true {
                 if let checkpoint = try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: manifest) {
-                    if discardAfterStop { checkpoint.discard() }
+                    if discardAfterStop {
+                        checkpoint.discard()
+                        try? pendingStore?.remove(PendingDownload(name:manifest.name,size:manifest.size,sha256:manifest.sha256,certificateSHA256:pairing.certificateSHA256))
+                    }
                     savedDownloadBytes = checkpoint.offset
                 }
                 progress = manifest.size == 0 ? 0 : Double(savedDownloadBytes) / Double(manifest.size)
@@ -306,7 +415,7 @@ final class TransferModel: ObservableObject {
             let seconds = max(ProcessInfo.processInfo.systemUptime - start, 0.001)
             progress = 1
             status = String(format: "Android verified and saved the file. %.2f s · %.1f MB/s. Tap Save received file on Android to choose a location.", seconds, Double(file.size) / seconds / 1_000_000)
-            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.3.0\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
+            diagnosticReport = String(format: "Nearby diagnostic report\nApp: 0.3.1\nDirection: iPhone → Android\nVerified by Android: yes\nFile bytes: %lld\nUpload and acknowledgement: %.3f s\nThroughput: %.3f MB/s\nPreparation, acceptance and Wi-Fi setup excluded.", file.size, seconds, Double(file.size) / seconds / 1_000_000)
         } catch {
             // Best effort revoke even after the original session was cancelled.
             // Android also discards incomplete uploads when its socket closes.
@@ -329,6 +438,8 @@ final class TransferModel: ObservableObject {
     func discardDownload() {
         guard !busy, let pairing, let manifest else { return }
         (try? DownloadCheckpoint(pin: pairing.certificateSHA256, manifest: manifest))?.discard()
+        try? pendingStore?.remove(PendingDownload(name:manifest.name,size:manifest.size,sha256:manifest.sha256,certificateSHA256:pairing.certificateSHA256))
+        refreshPendingDownloads()
         savedDownloadBytes = 0; progress = 0
         status = "Saved progress discarded. You can start again."
     }
@@ -338,6 +449,8 @@ final class TransferModel: ObservableObject {
         for url in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
             if ["part", "json"].contains(url.pathExtension) { try? FileManager.default.removeItem(at: url) }
         }
+        try? pendingStore?.removeAll()
+        refreshPendingDownloads()
         savedDownloadBytes = 0; progress = 0; status = "All incomplete download progress discarded. Completed files remain saved."
     }
 
@@ -365,7 +478,11 @@ final class TransferModel: ObservableObject {
         status = "Cancelling… If the Wi-Fi prompt is open, dismiss it."
     }
 
-    func disconnect() {
+    func disconnect(forgetRememberedPairing: Bool = true) {
+        if forgetRememberedPairing {
+            if let pairing { pendingStore?.forgetPairing(pin:pairing.certificateSHA256) }
+            cancelResumeScan()
+        }
         cancellation.cancel()
         session?.invalidateAndCancel(); session = nil; agent = nil
         if let pairing, JoinSettings.canRequestAutomaticJoin(profile: profileStatus) {
@@ -374,7 +491,8 @@ final class TransferModel: ObservableObject {
         pairing = nil; manifest = nil; received = nil; host = nil; progress = 0; savedDownloadBytes = 0
         senderReadSummary = nil
         diagnosticReport = ""; manualJoinSuggested = false; joinResult = "not attempted"
-        status = "Pairing cleared. To leave a network joined in Camera or Settings, use Settings → Wi-Fi. Previously received files remain in Files → On My iPhone → Nearby prototype."
+        refreshPendingDownloads()
+        status = "Pairing cleared. Incomplete downloads remain in Unfinished downloads. To leave a network joined in Camera or Settings, use Settings → Wi-Fi. Previously received files remain in Files → On My iPhone → Nearby prototype."
     }
 
     private func makeRequest(pairing: Pairing, host: String, path: String, timeout: TimeInterval) -> URLRequest {
@@ -386,7 +504,7 @@ final class TransferModel: ObservableObject {
     }
 
     private func updateReport(result: ReceiveResult? = nil, error: Error? = nil) {
-        var lines = ["Nearby diagnostic report", "Receiver app: 0.3.0", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        var lines = ["Nearby diagnostic report", "Receiver app: 0.3.1", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
                      "Hotspot capability: \(profileStatus.rawValue)", "Profile check is diagnostic; installed signature not verified.",
                      "Join mode: \(joinResult)"]
         if let manifest {

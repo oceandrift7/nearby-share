@@ -29,10 +29,30 @@ struct TransferView: View {
                         Text("Directly between your devices.").foregroundStyle(.secondary)
                     }
                     ReceiverHero(connected: model.manifest != nil, paired: model.pairing != nil)
-                    Button { scanning = true } label: {
+                    Button { model.cancelResumeScan(); scanning = true } label: {
                         Label("Scan Android pairing code", systemImage: "qrcode.viewfinder")
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.buttonStyle(.borderedProminent).disabled(model.busy)
+                    if !model.busy && !model.pendingDownloads.isEmpty {
+                        VStack(alignment:.leading,spacing:16) {
+                            Text("Unfinished downloads").font(.headline)
+                            ForEach(model.pendingDownloads) { row in
+                                VStack(alignment:.leading,spacing:8) {
+                                    Text(row.download.name).font(.subheadline.bold())
+                                    Text("Saved \(ByteCountFormatter.string(fromByteCount:row.savedBytes,countStyle:.file)) of \(ByteCountFormatter.string(fromByteCount:row.download.size,countStyle:.file))").font(.caption)
+                                    Button(row.canReconnect ? (row.savedBytes > 0 ? "Reconnect and resume" : "Reconnect and retry") : "Scan to resume") {
+                                        Task { await model.resumePending(row.download) }
+                                    }.buttonStyle(.borderedProminent)
+                                    HStack {
+                                        Button("Scan fresh code") { model.requestResumeScan(row.download) }
+                                        Spacer()
+                                        Button("Remove") { model.removePending(row.download) }
+                                    }.font(.caption)
+                                }
+                            }
+                        }.nearbyCard()
+                    }
+                    if !model.historyWarning.isEmpty { Text(model.historyWarning).font(.footnote).foregroundStyle(.secondary) }
                     DisclosureGroup("How to connect") {
                         Text("First scan Android’s step 1 Wi-Fi code with the iPhone Camera to join its hotspot. Then scan the step 2 Nearby pairing code here. Keep both apps open. Choose a file on Android to send here, or tap Receive from iPhone on Android to send in the other direction. Android asks you to accept before receiving. iPhone-to-iPhone is not supported yet.")
                             .font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
@@ -114,7 +134,7 @@ struct TransferView: View {
                         Button("Disconnect and clear pairing") { model.disconnect() }.disabled(model.busy)
                     }
                     Button("Discard all incomplete downloads") { model.discardAllDownloads() }.disabled(model.busy).font(.footnote)
-                    Text("Nearby 0.3.0 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
+                    Text("Nearby 0.3.1 · Android ↔ iPhone").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
             }.background(Color(uiColor: .systemGroupedBackground))
                 .toolbar(.hidden, for: .navigationBar)
@@ -126,21 +146,27 @@ struct TransferView: View {
             case .failure(let error): model.status = "Could not choose file: \(error.localizedDescription)"
             }
         }
-        .sheet(isPresented: $scanning) {
+        .sheet(isPresented: $scanning, onDismiss: { model.cancelResumeScan() }) {
             QRScanner { result in
+                let expected = model.takeResumeScanTarget()
                 scanning = false
                 showPassword = false
                 manualExpanded = false
                 returningFromSettings = false
-                model.scan(result)
-                manualExpanded = model.pairing != nil && model.profileStatus == .missing
+                Task {
+                    await model.handleScannedCode(result,expected:expected)
+                    manualExpanded = model.pairing != nil && model.manifest == nil && model.profileStatus == .missing
+                }
             }
+        }
+        .onChange(of:model.requestedResumeScan) { requested in
+            if requested { model.requestedResumeScan = false; scanning = true }
         }
         .onChange(of: model.busy) { busy in UIApplication.shared.isIdleTimerDisabled = busy }
         .onChange(of: model.manualJoinSuggested) { suggested in if suggested { manualExpanded = true } }
         .onChange(of: model.manifest != nil) { connected in if connected { manualExpanded = false; showPassword = false } }
         .onChange(of: scenePhase) { phase in
-            if phase == .background { returningFromSettings = manualExpanded && model.pairing != nil && model.manifest == nil }
+            if phase == .background { model.pauseForBackground(); returningFromSettings = manualExpanded && model.pairing != nil && model.manifest == nil }
             if phase == .active && returningFromSettings {
                 returningFromSettings = false
                 if !model.busy && model.manifest == nil { Task { await model.connect(joinNetwork: false) } }

@@ -23,6 +23,23 @@ final class DownloadCheckpoint {
     let manifest: Manifest
     private(set) var offset: Int64 = 0
 
+    static func identity(pin: String, manifest: Manifest) -> String {
+        SHA256.hash(data:Data("\(pin)|\(manifest.sha256)|\(manifest.size)".utf8)).map { String(format:"%02x",$0) }.joined()
+    }
+
+    static func savedOffset(pin: String, manifest: Manifest, directory: URL? = nil) -> Int64 {
+        guard let root = try? directory ?? Self.directory() else { return 0 }
+        let key = identity(pin:pin,manifest:manifest)
+        let metadata = root.appendingPathComponent(key + ".json")
+        guard let size = (try? FileManager.default.attributesOfItem(atPath:metadata.path)[.size] as? NSNumber)?.intValue, size <= 256,
+              let data = try? Data(contentsOf:metadata), let state = try? JSONDecoder().decode(State.self,from:data),
+              state.offset >= 0, state.offset <= manifest.size,
+              state.offset == manifest.size || state.offset % chunkSize == 0,
+              let length = (try? FileManager.default.attributesOfItem(atPath:root.appendingPathComponent(key + ".part").path)[.size] as? NSNumber)?.int64Value,
+              length >= state.offset else { return 0 }
+        return state.offset
+    }
+
     static func directory() throws -> URL {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         var directory = base.appendingPathComponent("IncomingParts", isDirectory: true)
@@ -36,8 +53,7 @@ final class DownloadCheckpoint {
         self.manifest = manifest
         let directory = try directory ?? Self.directory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let identity = "\(pin)|\(manifest.sha256)|\(manifest.size)"
-        let key = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        let key = Self.identity(pin:pin,manifest:manifest)
         part = directory.appendingPathComponent(key + ".part")
         metadata = directory.appendingPathComponent(key + ".json")
         let length = (try? FileManager.default.attributesOfItem(atPath: part.path)[.size] as? NSNumber)?.int64Value ?? -1

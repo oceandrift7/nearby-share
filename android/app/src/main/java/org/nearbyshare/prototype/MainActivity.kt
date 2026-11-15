@@ -50,6 +50,11 @@ class MainActivity : Activity() {
     private lateinit var saveButton: Button
     private var exportFile: File? = null
     private var displayedOfferID: String? = null
+    private val savedOutgoing by lazy { SavedOutgoingFiles(File(filesDir, "saved-outgoing")) }
+    private lateinit var shareLast: Button
+    private lateinit var savedShares: Button
+    private lateinit var forgetShares: Button
+    private lateinit var savedShareInfo: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +101,31 @@ class MainActivity : Activity() {
             }
         }
         layout.addView(receiveButton)
+        shareLast = Button(this).apply {
+            text = "Share last file again"
+            setOnClickListener { savedOutgoing.all().firstOrNull()?.let { restartSavedShare(it) } }
+        }
+        savedShares = Button(this).apply {
+            text = "Saved shared files"
+            setOnClickListener {
+                val items = savedOutgoing.all()
+                if (items.isEmpty()) { refreshSavedShares(); return@setOnClickListener }
+                android.app.AlertDialog.Builder(this@MainActivity).setTitle("Share a saved file again")
+                    .setItems(items.map { "${it.name} (${android.text.format.Formatter.formatShortFileSize(this@MainActivity, it.size)})" }.toTypedArray()) { _, index -> restartSavedShare(items[index]) }
+                    .setNegativeButton("Close", null).show()
+            }
+        }
+        forgetShares = Button(this).apply {
+            text = "Forget saved shared files"
+            setOnClickListener {
+                android.app.AlertDialog.Builder(this@MainActivity).setTitle("Forget saved shared files?")
+                    .setMessage("This stops the current session and deletes Nearby's saved outgoing copies. Original files and received files remain.")
+                    .setPositiveButton("Forget") { _, _ -> stopSharing(); savedOutgoing.forgetAll(); refreshSavedShares() }
+                    .setNegativeButton("Keep", null).show()
+            }
+        }
+        savedShareInfo = TextView(this).apply { textSize = 13f; setTextColor(ink) }
+        layout.addView(shareLast); layout.addView(savedShares); layout.addView(forgetShares); layout.addView(savedShareInfo)
         acceptButton = Button(this).apply { text = "Accept incoming file"; visibility = android.view.View.GONE; setOnClickListener { displayedOfferID?.let { inbox?.decide(it, true) } } }
         rejectButton = Button(this).apply { text = "Reject incoming file"; visibility = android.view.View.GONE; setOnClickListener { displayedOfferID?.let { inbox?.decide(it, false) } } }
         saveButton = Button(this).apply {
@@ -159,10 +189,11 @@ class MainActivity : Activity() {
         }
         layout.addView(qr, LinearLayout.LayoutParams(-1, -2))
         layout.addView(TextView(this).apply {
-            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.3.0 · Android ↔ iPhone"
+            text = "Keep both apps open. Anyone scanning the pairing code can request a transfer. Sending mode shares your selected file; receiving mode asks before accepting.\n\nNearby 0.3.1 · Android ↔ iPhone"
             textSize = 13f; setTextColor(Color.rgb(84, 102, 122)); setPadding(0, dp(20), 0, 0)
         })
         setContentView(ScrollView(this).apply { addView(layout) })
+        refreshSavedShares()
     }
 
     @Deprecated("Prototype uses platform picker")
@@ -212,9 +243,12 @@ class MainActivity : Activity() {
                     }
                 } }
                 val digest = hex(hash.digest())
+                val remembered = savedOutgoing.remember(file, name, digest) { generation == run }
                 runOnUiThread {
-                    if (generation != run || isDestroyed) file.delete()
-                    else { selected = file; startWithPermission(name, file, digest) }
+                    refreshSavedShares()
+                    if (generation == run && !isDestroyed) {
+                        selected = remembered.file; startWithPermission(remembered.name, remembered.file, remembered.hash)
+                    }
                 }
             } catch (e: Exception) {
                 snapshot?.delete()
@@ -262,7 +296,7 @@ class MainActivity : Activity() {
                             // Public hotspot band/channel APIs are unavailable on our Android
                             // 10/12 targets. Never substitute the upstream Wi-Fi station's data.
                             val bandMask: Int? = null
-                            val diagnostics = JSONObject().put("appVersion", "0.3.0")
+                            val diagnostics = JSONObject().put("appVersion", "0.3.1")
                                 .put("model", Build.MODEL).put("androidAPI", Build.VERSION.SDK_INT)
                                 .put("hotspotBandMask", bandMask ?: JSONObject.NULL)
                                 .put("supports5GHz", getSystemService(WifiManager::class.java).is5GHzBandSupported)
@@ -343,7 +377,7 @@ class MainActivity : Activity() {
         inbox?.close(); inbox = null
         server?.stop(); server = null
         val old = reservation; reservation = null; old?.close()
-        selected?.delete(); selected = null
+        selected = null // Saved private snapshots survive stopping/reopening; Forget deletes them.
         if (::qr.isInitialized) qr.setImageDrawable(null)
         wifiBitmap = null; pairingBitmap = null
         if (::qrSteps.isInitialized) qrSteps.visibility = android.view.View.GONE
@@ -353,7 +387,45 @@ class MainActivity : Activity() {
         if (::acceptButton.isInitialized) acceptButton.visibility = android.view.View.GONE
         if (::rejectButton.isInitialized) rejectButton.visibility = android.view.View.GONE
         if (::saveButton.isInitialized) saveButton.visibility = android.view.View.GONE
-        if (::status.isInitialized) status.text = "Sharing stopped. Previous QR code is invalid."
+        if (::status.isInitialized) status.text = "Sharing stopped. Previous QR code is invalid. Saved files can be shared again without the picker."
+        if (::shareLast.isInitialized) refreshSavedShares()
+    }
+
+    private fun refreshSavedShares() {
+        val items = savedOutgoing.all()
+        shareLast.isEnabled = items.isNotEmpty(); savedShares.isEnabled = items.isNotEmpty(); forgetShares.isEnabled = items.isNotEmpty()
+        savedShareInfo.text = if (items.isEmpty()) "Nearby remembers up to 3 selected files privately for reconnecting."
+        else "${items.size} saved outgoing file(s), ${android.text.format.Formatter.formatShortFileSize(this, items.sumOf { it.size })}. Copies stay in Nearby until replaced by newer selections or forgotten."
+    }
+
+    private fun restartSavedShare(item: SavedOutgoingFiles.Item) {
+        stopSharing()
+        val run = generation
+        choose.isEnabled = false; receiveButton.isEnabled = false
+        status.text = "Checking saved file before sharing again…"
+        worker.execute {
+            try {
+                val current = savedOutgoing.all().firstOrNull { it.id == item.id } ?: error("Saved file is unavailable. Choose it again.")
+                val digest = MessageDigest.getInstance("SHA-256")
+                current.file.inputStream().buffered(262144).use { input ->
+                    val buffer = ByteArray(262144)
+                    while (true) {
+                        check(generation == run) { "Restart cancelled" }
+                        val count = input.read(buffer); if (count < 0) break
+                        digest.update(buffer, 0, count)
+                    }
+                }
+                check(hex(digest.digest()) == current.hash) { "Saved copy changed. Choose the original file again." }
+                runOnUiThread { if (generation == run && !isDestroyed) {
+                    selected = current.file; startWithPermission(current.name, current.file, current.hash)
+                } }
+            } catch (error: Exception) {
+                runOnUiThread { if (generation == run && !isDestroyed) {
+                    choose.isEnabled = true; receiveButton.isEnabled = true; refreshSavedShares()
+                    status.text = "Could not restart sharing: ${error.message}"
+                } }
+            }
+        }
     }
 
     private fun renderIncoming() {
