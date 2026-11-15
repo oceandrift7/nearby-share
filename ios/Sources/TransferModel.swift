@@ -80,6 +80,7 @@ final class TransferModel: ObservableObject {
     private let pendingStore: PendingDownloadStore?
     private var resumeScanTarget: PendingDownload?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundGuard: UUID?
     private var discardAfterStop = false
     var androidReceives: Bool { manifest?.mode == "receive" }
     private var cancellation = TransferCancellation()
@@ -172,8 +173,14 @@ final class TransferModel: ObservableObject {
     func pauseForBackground() {
         guard busy, !sending, manifest?.supportsResume == true else { return }
         if backgroundTask == .invalid {
+            let marker = UUID()
+            let pausedCancellation = cancellation
+            backgroundGuard = marker
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName:"Save download progress") { [weak self] in
-                Task { @MainActor in self?.cancellation.cancel(); self?.endBackgroundProtection() }
+                pausedCancellation.cancel()
+                Task { @MainActor in
+                    if self?.backgroundGuard == marker { self?.endBackgroundProtection() }
+                }
             }
         }
         pauseDownload()
@@ -181,7 +188,8 @@ final class TransferModel: ObservableObject {
     }
     private func endBackgroundProtection() {
         guard backgroundTask != .invalid else { return }
-        let task = backgroundTask; backgroundTask = .invalid; UIApplication.shared.endBackgroundTask(task)
+        let task = backgroundTask; backgroundTask = .invalid; backgroundGuard = nil
+        UIApplication.shared.endBackgroundTask(task)
     }
 
     func scan(_ text: String) {

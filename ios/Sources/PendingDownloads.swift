@@ -16,14 +16,17 @@ struct KeychainPairingVault: PairingVault {
          kSecAttrAccount as String:id, kSecAttrSynchronizable as String:false]
     }
     func save(_ pairing: Pairing, id: String) -> Bool {
-        guard let data = try? JSONEncoder().encode(pairing), data.count <= 4096 else { return false }
+        saveStatus(pairing,id:id) == errSecSuccess
+    }
+    func saveStatus(_ pairing: Pairing, id: String) -> OSStatus {
+        guard let data = try? JSONEncoder().encode(pairing), data.count <= 4096 else { return errSecParam }
         let attributes: [String: Any] = [kSecValueData as String:data,
             kSecAttrAccessible as String:kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
         let updated = SecItemUpdate(query(id) as CFDictionary, attributes as CFDictionary)
-        if updated == errSecSuccess { return true }
-        guard updated == errSecItemNotFound else { return false }
+        if updated == errSecSuccess { return updated }
+        guard updated == errSecItemNotFound else { return updated }
         var value = query(id); attributes.forEach { value[$0.key] = $0.value }
-        return SecItemAdd(value as CFDictionary, nil) == errSecSuccess
+        return SecItemAdd(value as CFDictionary, nil)
     }
     func load(id: String) -> Pairing? {
         var value = query(id); value[kSecReturnData as String] = true; value[kSecMatchLimit as String] = kSecMatchLimitOne

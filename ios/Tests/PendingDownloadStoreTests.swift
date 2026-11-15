@@ -1,4 +1,5 @@
 import XCTest
+import Security
 @testable import NearbyPrototype
 
 final class MemoryPairingVault: PairingVault {
@@ -68,7 +69,7 @@ final class PendingDownloadStoreTests: XCTestCase {
     func testActualKeychainRoundTripAndDeletion() throws {
         let vault=KeychainPairingVault(service:"org.nearbyshare.tests.\(UUID().uuidString)")
         let id=UUID().uuidString; defer { vault.remove(id:id) }
-        XCTAssertTrue(vault.save(pairing(),id:id),"Standard app Keychain storage failed")
+        XCTAssertEqual(vault.saveStatus(pairing(),id:id),errSecSuccess,"Standard app Keychain storage failed")
         XCTAssertEqual(vault.load(id:id)?.token,pairing().token)
         let old=pairing()
         let fresh=Pairing(v:old.v,ssid:old.ssid,password:old.password,hosts:old.hosts,port:old.port,token:String(repeating:"c",count:64),certificateSHA256:old.certificateSHA256)
