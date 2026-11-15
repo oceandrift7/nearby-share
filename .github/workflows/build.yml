@@ -133,16 +133,18 @@ jobs:
         shell: bash
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPhone")))')
-          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator CODE_SIGNING_ALLOWED=NO build-for-testing
-          # Simulator-only synthetic identity: real Keychain APIs need a signed
-          # host even though no Apple account/profile is used by these tests.
+          # Let Xcode embed simulated entitlements at link time and ad-hoc sign
+          # the host. Applying iOS entitlements to a macOS simulator signature
+          # with codesign prevents launch; disabling signing loses Keychain access.
+          SIM_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= "CODE_SIGN_ENTITLEMENTS=$PWD/SimulatorTest.entitlements")
+          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator "${SIM_SIGNING[@]}" build-for-testing
           SIM_APP=build-simulator/Build/Products/Debug-iphonesimulator/NearbyPrototype.app
-          codesign --force --deep --sign - --entitlements SimulatorTest.entitlements "$SIM_APP"
           codesign --verify --deep --strict "$SIM_APP"
-          codesign --display --entitlements :- "$SIM_APP" > simulator-entitlements.plist
-          python3 -c 'import plistlib; e=plistlib.load(open("simulator-entitlements.plist","rb")); assert e["application-identifier"] == "NEARBYTEST.org.nearbyshare.prototype"; assert e["keychain-access-groups"] == ["NEARBYTEST.org.nearbyshare.prototype"]'
-          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building | tee simulator-test.log
+          xcodebuild -project NearbyPrototype.xcodeproj -scheme NearbyPrototype -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build-simulator -resultBundlePath TestResults.xcresult -parallel-testing-enabled NO "${SIM_SIGNING[@]}" test-without-building | tee simulator-test.log
           python3 -c 'from pathlib import Path; lines=Path("simulator-test.log").read_text().splitlines(); report=[s[s.index("NEARBY_BENCHMARK ")+17:] for s in lines if "NEARBY_BENCHMARK " in s]; assert report, "Missing benchmark result"; Path("iphone-transfer-benchmark.jsonl").write_text("\n".join(report)+"\n")'
+      - name: Diagnose simulator launch or Keychain failure
+        if: failure()
+        run: xcrun simctl spawn booted log show --last 5m --style compact --predicate 'process == "NearbyPrototype" OR process == "securityd" OR process == "amfid"' | tail -100
       - name: Capture native iPhone screen
         if: ${{ inputs.capture_ui == true }}
         working-directory: ios
